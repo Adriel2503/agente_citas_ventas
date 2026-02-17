@@ -8,8 +8,22 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-_BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent.parent
-load_dotenv(_BASE_DIR / ".env")
+
+def _find_env_path() -> Path:
+    """Busca .env hacia arriba desde el módulo actual."""
+    current = Path(__file__).resolve().parent
+    for _ in range(6):
+        env_file = current / ".env"
+        if env_file.exists():
+            return env_file
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return Path.cwd() / ".env"
+
+
+load_dotenv(_find_env_path())
 
 
 def _get_str(key: str, default: str) -> str:
@@ -49,6 +63,7 @@ API_INFORMACION_URL: str = _get_str(
     "https://api.maravia.pe/servicio/ws_informacion_ia.php",
 )
 API_TIMEOUT: int = _get_int("API_TIMEOUT", 10, min_val=1, max_val=120)
+CHAT_TIMEOUT: int = _get_int("CHAT_TIMEOUT", 120, min_val=30, max_val=300)
 ID_EMPRESA: int = _get_int("ID_EMPRESA", 1, min_val=1)
 
 # OpenAI (agente)

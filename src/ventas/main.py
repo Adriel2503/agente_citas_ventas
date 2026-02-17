@@ -3,6 +3,7 @@ Servidor MCP del agente especializado en venta directa.
 Usa FastMCP para exponer la herramienta chat según el protocolo MCP.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -56,13 +57,22 @@ async def chat(
     logger.info("[MCP] Mensaje recibido - Session: %s, Length: %s chars", session_id, len(message))
 
     try:
-        reply = await process_venta_message(
-            message=message,
-            session_id=session_id,
-            context=context,
+        reply = await asyncio.wait_for(
+            process_venta_message(
+                message=message,
+                session_id=session_id,
+                context=context,
+            ),
+            timeout=app_config.CHAT_TIMEOUT,
         )
         logger.info("[MCP] Respuesta generada - Length: %s chars", len(reply))
         return reply
+    except asyncio.TimeoutError:
+        error_msg = (
+            f"La solicitud tardó más de {app_config.CHAT_TIMEOUT}s. Por favor, intenta de nuevo."
+        )
+        logger.error("[MCP] Timeout en process_venta_message (CHAT_TIMEOUT=%s)", app_config.CHAT_TIMEOUT)
+        return error_msg
     except ValueError as e:
         error_msg = f"Error de configuración: {str(e)}"
         logger.error("[MCP] %s", error_msg)
@@ -79,6 +89,7 @@ if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("Host: %s:%s", app_config.SERVER_HOST, app_config.SERVER_PORT)
     logger.info("Modelo: %s", app_config.OPENAI_MODEL)
+    logger.info("Timeouts: OPENAI=%ss, API=%ss, CHAT=%ss", app_config.OPENAI_TIMEOUT, app_config.API_TIMEOUT, app_config.CHAT_TIMEOUT)
     logger.info("Tool expuesta al orquestador: chat")
     logger.info("Tools internas: search_productos_servicios")
     logger.info("=" * 60)

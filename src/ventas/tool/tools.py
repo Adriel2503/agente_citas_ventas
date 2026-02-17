@@ -10,10 +10,8 @@ from langchain.tools import tool, ToolRuntime
 
 try:
     from ..services.busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
-    from ..config import config as app_config
 except ImportError:
     from ventas.services.busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
-    from ventas.config import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +36,12 @@ async def search_productos_servicios(
     """
     logger.debug("[TOOL] search_productos_servicios - busqueda: %s, limite: %s", busqueda, limite)
 
-    # id_empresa desde runtime (agente) o desde config (standalone)
-    id_empresa = app_config.ID_EMPRESA
-    if runtime and getattr(runtime, "context", None) and hasattr(runtime.context, "id_empresa"):
-        id_empresa = runtime.context.id_empresa
+    # id_empresa debe venir del contexto (orquestador envía config.id_empresa)
+    if not (runtime and getattr(runtime, "context", None) and hasattr(runtime.context, "id_empresa")):
+        logger.error("[TOOL] id_empresa no disponible en contexto. El orquestador debe enviar config.id_empresa.")
+        return "No se pudo completar la búsqueda: configuración de empresa no disponible. Por favor, intenta de nuevo."
+
+    id_empresa = runtime.context.id_empresa
 
     try:
         result = await buscar_productos_servicios(

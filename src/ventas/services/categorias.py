@@ -3,17 +3,14 @@ Categorías desde ws_informacion_ia.php.
 Usa codOpe: OBTENER_CATEGORIAS. Para inyectar en el system prompt (información de productos y servicios).
 """
 
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
 
-import httpx
-
 try:
-    from ..config import config as app_config
+    from ..services.api_informacion import post_informacion
 except ImportError:
-    from ventas.config import config as app_config
+    from ventas.services.api_informacion import post_informacion
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +50,7 @@ def format_categorias_para_prompt(categorias: List[Dict[str, Any]]) -> str:
     return "\n".join(lineas)
 
 
-def obtener_categorias(id_empresa: int) -> str:
+async def obtener_categorias(id_empresa: int) -> str:
     """
     Obtiene categorías de la API (OBTENER_CATEGORIAS) y devuelve texto formateado
     para inyectar en el system prompt como información de productos y servicios.
@@ -64,21 +61,10 @@ def obtener_categorias(id_empresa: int) -> str:
     Returns:
         Texto formateado (nombre + descripción por ítem) o mensaje por defecto si falla/vacío.
     """
-    payload = {
-        "codOpe": COD_OPE,
-        "id_empresa": id_empresa,
-    }
-    logger.debug("[CATEGORIAS] POST %s - %s", app_config.API_INFORMACION_URL, json.dumps(payload))
+    payload = {"codOpe": COD_OPE, "id_empresa": id_empresa}
 
     try:
-        with httpx.Client(timeout=app_config.API_TIMEOUT) as client:
-            response = client.post(
-                app_config.API_INFORMACION_URL,
-                json=payload,
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        data = await post_informacion(payload)
     except Exception as e:
         logger.warning("[CATEGORIAS] Error al obtener categorías: %s", e)
         return "No hay información de productos y servicios cargada. Usa la herramienta search_productos_servicios cuando pregunten por algo concreto."

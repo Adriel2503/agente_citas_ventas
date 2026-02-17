@@ -41,7 +41,7 @@ def _validate_context(context: Dict[str, Any]) -> None:
     logger.debug("[AGENT] Context validated: id_empresa=%s", config_data.get("id_empresa"))
 
 
-def _get_agent(config: Dict[str, Any]):
+async def _get_agent(config: Dict[str, Any]):
     """Crea el agente LangChain con tools y checkpointer."""
     logger.debug("[AGENT] Creando agente con LangChain 1.2+ API")
 
@@ -53,7 +53,7 @@ def _get_agent(config: Dict[str, Any]):
         timeout=app_config.OPENAI_TIMEOUT,
     )
 
-    system_prompt = build_ventas_system_prompt(config=config)
+    system_prompt = await build_ventas_system_prompt(config=config)
 
     agent = create_agent(
         model=model,
@@ -102,12 +102,11 @@ async def process_venta_message(
         logger.error("[AGENT] Error de contexto: %s", e)
         return f"Error de configuración: {str(e)}"
 
-    config_data = context.get("config", {})
-    if not config_data.get("personalidad"):
-        config_data["personalidad"] = "amable, profesional y cercano"
+    # Copia para no mutar context; defaults (ej. personalidad) los aplica el prompt builder
+    config_data = dict(context.get("config", {}))
 
     try:
-        agent = _get_agent(config_data)
+        agent = await _get_agent(config_data)
     except Exception as e:
         logger.error("[AGENT] Error creando agente: %s", e, exc_info=True)
         return "Disculpa, tuve un problema de configuración. ¿Podrías intentar nuevamente?"

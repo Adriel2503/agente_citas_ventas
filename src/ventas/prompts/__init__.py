@@ -2,6 +2,7 @@
 Prompts del agente de ventas. Builder del system prompt.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict
@@ -10,8 +11,12 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 try:
     from ..services.categorias import obtener_categorias
+    from ..services.metodos_pago import obtener_metodos_pago
+    from ..services.sucursales import obtener_sucursales
 except ImportError:
     from ventas.services.categorias import obtener_categorias
+    from ventas.services.metodos_pago import obtener_metodos_pago
+    from ventas.services.sucursales import obtener_sucursales
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,7 @@ def _apply_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
+async def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
     """
     Construye el system prompt del agente de ventas.
 
@@ -52,15 +57,24 @@ def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
     template = env.get_template("ventas_system.j2")
     variables = _apply_defaults(config)
 
-    # Inyectar información de productos y servicios (categorías API) para "¿qué tienen?"
     id_empresa = config.get("id_empresa")
     if id_empresa is not None:
-        variables["informacion_productos_servicios"] = obtener_categorias(int(id_empresa))
+        id_emp = int(id_empresa)
+        informacion_productos, informacion_sucursales, medios_pago_texto = await asyncio.gather(
+            obtener_categorias(id_emp),
+            obtener_sucursales(id_emp),
+            obtener_metodos_pago(id_emp),
+        )
+        variables["informacion_productos_servicios"] = informacion_productos
+        variables["informacion_sucursales"] = informacion_sucursales
+        variables["medios_pago"] = medios_pago_texto or variables.get("medios_pago", "")
     else:
         variables["informacion_productos_servicios"] = (
             "No hay información de productos y servicios cargada. "
             "Usa la herramienta search_productos_servicios cuando pregunten por algo concreto."
         )
+        variables["informacion_sucursales"] = ""
+        # medios_pago queda con el default de _apply_defaults (vacío) o el que venga en config
 
     return template.render(**variables)
 

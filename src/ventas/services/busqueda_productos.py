@@ -4,16 +4,18 @@ Usa codOpe: BUSCAR_PRODUCTOS_SERVICIOS_VENTAS_DIRECTAS
 """
 
 import json
-import re
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 try:
     from ..config import config as app_config
+    from ..services.api_informacion import post_informacion
 except ImportError:
     from ventas.config import config as app_config
+    from ventas.services.api_informacion import post_informacion
 
 logger = logging.getLogger(__name__)
 
@@ -108,14 +110,7 @@ async def buscar_productos_servicios(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=app_config.API_TIMEOUT) as client:
-            response = await client.post(
-                app_config.API_INFORMACION_URL,
-                json=payload,
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        data = await post_informacion(payload)
 
         if log_search_apis:
             logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))

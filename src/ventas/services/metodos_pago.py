@@ -1,0 +1,109 @@
+"""
+Métodos de pago desde ws_informacion_ia.php.
+Usa codOpe: OBTENER_METODOS_PAGO. Para inyectar en el system prompt (medios de pago).
+"""
+
+import logging
+from typing import Any
+
+try:
+    from ..services.api_informacion import post_informacion
+except ImportError:
+    from ventas.services.api_informacion import post_informacion
+
+logger = logging.getLogger(__name__)
+
+COD_OPE = "OBTENER_METODOS_PAGO"
+
+
+def _norm(s: Any) -> str:
+    """Normaliza a string; None/vacío -> ''."""
+    if s is None:
+        return ""
+    return str(s).strip()
+
+
+def _format_metodos_pago_para_prompt(metodos_pago: dict[str, Any]) -> str:
+    """
+    Formatea metodos_pago para el system prompt.
+    Bancos: 1) nombre: Cuenta X, CCI Y. Billeteras digitales: 1) Yape: titular, celular. Si null/empty: "No hay ..."
+    """
+    if not metodos_pago:
+        return "Bancos: No hay cuentas bancarias configuradas.\nBilleteras digitales: No hay billeteras digitales configuradas."
+
+    lineas = []
+
+    # Bancos
+    bancos = metodos_pago.get("bancos") or []
+    if bancos:
+        bancos_lineas = []
+        for i, b in enumerate(bancos, 1):
+            nombre = _norm(b.get("nombre")) or "Banco"
+            cuenta = _norm(b.get("numero_cuenta"))
+            cci = _norm(b.get("cci"))
+            parte = f"{i}) {nombre}: Cuenta {cuenta}, CCI {cci}" if cuenta or cci else f"{i}) {nombre}"
+            bancos_lineas.append(parte)
+        lineas.append("Bancos:\n" + "\n".join(bancos_lineas))
+    else:
+        lineas.append("Bancos: No hay cuentas bancarias configuradas.")
+
+    # Billeteras digitales (yape, plin)
+    wallets = []
+    yape = metodos_pago.get("yape")
+    if yape and isinstance(yape, dict):
+        titular = _norm(yape.get("titular"))
+        celular = _norm(yape.get("celular"))
+        if titular or celular:
+            partes = [p for p in [titular, f"celular {celular}" if celular else ""] if p]
+            wallets.append("Yape: " + ", ".join(partes))
+    plin = metodos_pago.get("plin")
+    if plin and isinstance(plin, dict):
+        titular = _norm(plin.get("titular"))
+        celular = _norm(plin.get("celular"))
+        if titular or celular:
+            partes = [p for p in [titular, f"celular {celular}" if celular else ""] if p]
+            wallets.append("Plin: " + ", ".join(partes))
+
+    if wallets:
+        billeteras_lineas = [f"{i}) {w}" for i, w in enumerate(wallets, 1)]
+        lineas.append("Billeteras digitales:\n" + "\n".join(billeteras_lineas))
+    else:
+        lineas.append("Billeteras digitales: No hay billeteras digitales configuradas.")
+
+    return "\n\n".join(lineas)
+
+
+async def obtener_metodos_pago(id_empresa: int) -> str:
+    """
+    Obtiene métodos de pago de la API (OBTENER_METODOS_PAGO) y devuelve texto
+    formateado para inyectar en el system prompt.
+
+    Args:
+        id_empresa: ID de la empresa
+
+    Returns:
+        Texto formateado (Bancos + Billeteras digitales) o string vacío si falla.
+    """
+    payload = {"codOpe": COD_OPE, "id_empresa": id_empresa}
+
+    try:
+        data = await post_informacion(payload)
+    except Exception as e:
+        logger.warning("[METODOS_PAGO] Error al obtener métodos de pago: %s", e)
+        return ""
+
+    if not data.get("success"):
+        logger.warning(
+            "[METODOS_PAGO] API no success: %s",
+            data.get("error") or data.get("message"),
+        )
+        return ""
+
+    metodos_pago = data.get("metodos_pago")
+    if not metodos_pago or not isinstance(metodos_pago, dict):
+        return ""
+
+    return _format_metodos_pago_para_prompt(metodos_pago)
+
+
+__all__ = ["obtener_metodos_pago", "_format_metodos_pago_para_prompt"]
