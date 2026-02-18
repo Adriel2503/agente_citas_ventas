@@ -5,7 +5,7 @@ Helper compartido para categorías, sucursales y búsqueda de productos.
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -15,6 +15,24 @@ except ImportError:
     from ventas.config import config as app_config
 
 logger = logging.getLogger(__name__)
+
+_client: Optional[httpx.AsyncClient] = None
+
+
+def get_client() -> httpx.AsyncClient:
+    """Devuelve el cliente HTTP compartido; lo crea en la primera llamada (lazy init)."""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=app_config.API_TIMEOUT)
+    return _client
+
+
+async def close_http_client() -> None:
+    """Cierra el cliente HTTP compartido. Llamar en el teardown del servidor (lifespan)."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 
 async def post_informacion(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -34,7 +52,9 @@ async def post_informacion(payload: Dict[str, Any]) -> Dict[str, Any]:
         app_config.API_INFORMACION_URL,
         json.dumps(payload, ensure_ascii=False),
     )
-    async with httpx.AsyncClient(timeout=app_config.API_TIMEOUT) as client:
+    cod_ope = payload.get("codOpe", "")
+    try:
+        client = get_client()
         response = await client.post(
             app_config.API_INFORMACION_URL,
             json=payload,
@@ -42,6 +62,22 @@ async def post_informacion(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         response.raise_for_status()
         return response.json()
+    except (httpx.HTTPStatusError, httpx.RequestError, httpx.TimeoutException) as e:
+        logger.warning(
+            "[API_INFORMACION] %s (codOpe=%s): %s",
+            type(e).__name__,
+            cod_ope,
+            e,
+        )
+        raise
+    except Exception as e:
+        logger.warning(
+            "[API_INFORMACION] %s (codOpe=%s): %s",
+            type(e).__name__,
+            cod_ope,
+            e,
+        )
+        raise
 
 
-__all__ = ["post_informacion"]
+__all__ = ["post_informacion", "close_http_client"]

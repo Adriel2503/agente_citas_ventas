@@ -60,11 +60,26 @@ async def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
     id_empresa = config.get("id_empresa")
     if id_empresa is not None:
         id_emp = int(id_empresa)
-        informacion_productos, informacion_sucursales, medios_pago_texto = await asyncio.gather(
+        r_cat, r_suc, r_med = await asyncio.gather(
             obtener_categorias(id_emp),
             obtener_sucursales(id_emp),
             obtener_metodos_pago(id_emp),
+            return_exceptions=True,
         )
+        # Degradación elegante: si una tarea lanzó, usar el mismo default que ese servicio
+        _default_categorias = (
+            "No hay información de productos y servicios cargada. "
+            "Usa la herramienta search_productos_servicios cuando pregunten por algo concreto."
+        )
+        informacion_productos = _default_categorias if isinstance(r_cat, BaseException) else r_cat
+        informacion_sucursales = "" if isinstance(r_suc, BaseException) else r_suc
+        medios_pago_texto = "" if isinstance(r_med, BaseException) else r_med
+        if isinstance(r_cat, BaseException):
+            logger.warning("[PROMPT] categorías falló: %s - %s", type(r_cat).__name__, r_cat)
+        if isinstance(r_suc, BaseException):
+            logger.warning("[PROMPT] sucursales falló: %s - %s", type(r_suc).__name__, r_suc)
+        if isinstance(r_med, BaseException):
+            logger.warning("[PROMPT] medios de pago falló: %s - %s", type(r_med).__name__, r_med)
         variables["informacion_productos_servicios"] = informacion_productos
         variables["informacion_sucursales"] = informacion_sucursales
         variables["medios_pago"] = medios_pago_texto or variables.get("medios_pago", "")

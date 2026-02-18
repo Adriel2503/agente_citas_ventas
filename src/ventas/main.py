@@ -5,6 +5,7 @@ Usa FastMCP para exponer la herramienta chat según el protocolo MCP.
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 from fastmcp import FastMCP
@@ -13,19 +14,31 @@ try:
     from . import config as app_config
     from .agent import process_venta_message
     from .logger import setup_logging, get_logger
+    from .services.api_informacion import close_http_client
 except ImportError:
     from ventas import config as app_config
     from ventas.agent import process_venta_message
     from ventas.logger import setup_logging, get_logger
+    from ventas.services.api_informacion import close_http_client
 
-log_level = getattr(logging, app_config.LOG_LEVEL.upper(), logging.INFO)
-setup_logging(level=app_config.LOG_LEVEL, log_file=None)
+setup_logging(level=app_config.LOG_LEVEL, log_file=app_config.LOG_FILE or None)
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def app_lifespan(server=None):
+    """Lifespan del servidor: cierra el cliente HTTP compartido al apagar (compatible FastMCP v2)."""
+    try:
+        yield {}
+    finally:
+        await close_http_client()
+
 
 mcp = FastMCP(
     name="Agente Ventas - MaravIA",
     instructions="Agente especializado en venta directa por chat",
+    lifespan=app_lifespan,
 )
 
 
@@ -77,6 +90,8 @@ async def chat(
         error_msg = f"Error de configuración: {str(e)}"
         logger.error("[MCP] %s", error_msg)
         return error_msg
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         error_msg = f"Error procesando mensaje: {str(e)}"
         logger.error("[MCP] %s", error_msg, exc_info=True)

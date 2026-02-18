@@ -2,7 +2,6 @@ from .config import (
     API_INFORMACION_URL,
     API_TIMEOUT,
     CHAT_TIMEOUT,
-    ID_EMPRESA,
     OPENAI_API_KEY,
     OPENAI_MODEL,
     OPENAI_TEMPERATURE,
@@ -11,13 +10,13 @@ from .config import (
     SERVER_HOST,
     SERVER_PORT,
     LOG_LEVEL,
+    LOG_FILE,
 )
 
 __all__ = [
     "API_INFORMACION_URL",
     "API_TIMEOUT",
     "CHAT_TIMEOUT",
-    "ID_EMPRESA",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
     "OPENAI_TEMPERATURE",
@@ -26,4 +25,5 @@ __all__ = [
     "SERVER_HOST",
     "SERVER_PORT",
     "LOG_LEVEL",
+    "LOG_FILE",
 ]

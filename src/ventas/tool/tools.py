@@ -63,7 +63,14 @@ async def search_productos_servicios(
         return "\n".join(lineas)
 
     except Exception as e:
-        logger.error("[TOOL] search_productos_servicios - Error: %s", e, exc_info=True)
+        logger.error(
+            "[TOOL] search_productos_servicios - %s: %s (busqueda=%r, id_empresa=%s)",
+            type(e).__name__,
+            e,
+            busqueda,
+            id_empresa,
+            exc_info=True,
+        )
         return f"Error al buscar: {str(e)}. Intenta de nuevo."
 
 
