@@ -42,7 +42,7 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool()
+@mcp.tool(name="venta_chat")
 async def chat(
     message: str,
     session_id: int,
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     logger.info("Host: %s:%s", app_config.SERVER_HOST, app_config.SERVER_PORT)
     logger.info("Modelo: %s", app_config.OPENAI_MODEL)
     logger.info("Timeouts: OPENAI=%ss, API=%ss, CHAT=%ss", app_config.OPENAI_TIMEOUT, app_config.API_TIMEOUT, app_config.CHAT_TIMEOUT)
-    logger.info("Tool expuesta al orquestador: chat")
+    logger.info("Tool expuesta al orquestador: venta_chat")
     logger.info("Tools internas: search_productos_servicios")
     logger.info("=" * 60)
 
