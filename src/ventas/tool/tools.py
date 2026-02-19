@@ -4,9 +4,10 @@ Versión mínima: búsqueda de productos/servicios (BUSCAR_PRODUCTOS_SERVICIOS_V
 """
 
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 
 from langchain.tools import tool, ToolRuntime
+from langchain_core.tools import InjectedToolArg
 
 try:
     from ..services.busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 async def search_productos_servicios(
     busqueda: str,
     limite: int = 10,
-    runtime: Optional[ToolRuntime] = None
+    runtime: Annotated[Optional[ToolRuntime], InjectedToolArg] = None
 ) -> str:
     """
     Busca productos y servicios del catálogo por nombre o descripción (ventas directas).
