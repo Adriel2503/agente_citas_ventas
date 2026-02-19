@@ -2,7 +2,8 @@
 Lógica del agente especializado en venta directa usando LangChain 1.2+ API moderna.
 """
 
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List, Union
 from dataclasses import dataclass
 
 from langchain.agents import create_agent
@@ -74,6 +75,40 @@ def _prepare_agent_context(context: Dict[str, Any], session_id: int) -> AgentCon
     )
 
 
+_IMAGE_URL_RE = re.compile(
+    r"https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?",
+    re.IGNORECASE,
+)
+_MAX_IMAGES = 10  # límite de OpenAI Vision
+
+
+def _build_content(message: str) -> Union[str, List[dict]]:
+    """
+    Devuelve string si no hay URLs de imagen (Caso 1),
+    o lista de bloques OpenAI Vision si las hay (Casos 2-5).
+
+    Casos:
+      1. Solo texto         -> str
+      2. Solo 1 URL         -> [{image_url}]
+      3. Texto + 1 URL      -> [{text}, {image_url}]
+      4. Solo N URLs        -> [{image_url}, ...]
+      5. Texto + N URLs     -> [{text}, {image_url}, ...]
+    """
+    urls = _IMAGE_URL_RE.findall(message)
+    if not urls:
+        return message  # Caso 1: sin cambio
+
+    urls = urls[:_MAX_IMAGES]
+    text = _IMAGE_URL_RE.sub("", message).strip()
+
+    blocks: List[dict] = []
+    if text:
+        blocks.append({"type": "text", "text": text})
+    for url in urls:
+        blocks.append({"type": "image_url", "image_url": {"url": url}})
+    return blocks
+
+
 async def process_venta_message(
     message: str,
     session_id: int,
@@ -119,7 +154,7 @@ async def process_venta_message(
         logger.debug("[AGENT] Invocando agente - Session: %s", session_id)
 
         result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": message}]},
+            {"messages": [{"role": "user", "content": _build_content(message)}]},
             config=config,
             context=agent_context,
         )
