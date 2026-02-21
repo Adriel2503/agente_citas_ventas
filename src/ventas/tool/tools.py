@@ -4,10 +4,8 @@ Versión mínima: búsqueda de productos/servicios (BUSCAR_PRODUCTOS_SERVICIOS_V
 """
 
 import logging
-from typing import Annotated, Optional
 
 from langchain.tools import tool, ToolRuntime
-from langchain_core.tools import InjectedToolArg
 
 try:
     from ..services.busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
@@ -21,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def search_productos_servicios(
     busqueda: str,
     limite: int = 10,
-    runtime: Annotated[Optional[ToolRuntime], InjectedToolArg] = None
+    runtime: ToolRuntime = None
 ) -> str:
     """
     Busca productos y servicios del catálogo por nombre o descripción (ventas directas).
@@ -37,12 +35,11 @@ async def search_productos_servicios(
     """
     logger.debug("[TOOL] search_productos_servicios - busqueda: %s, limite: %s", busqueda, limite)
 
-    # id_empresa debe venir del contexto (orquestador envía config.id_empresa)
-    if not (runtime and getattr(runtime, "context", None) and hasattr(runtime.context, "id_empresa")):
-        logger.error("[TOOL] id_empresa no disponible en contexto. El orquestador debe enviar config.id_empresa.")
-        return "No se pudo completar la búsqueda: configuración de empresa no disponible. Por favor, intenta de nuevo."
-
-    id_empresa = runtime.context.id_empresa
+    ctx = runtime.context if runtime else None
+    if not ctx or getattr(ctx, "id_empresa", None) is None:
+        logger.warning("[TOOL] search_productos_servicios - llamada sin contexto de empresa")
+        return "No tengo el contexto de empresa para buscar productos; no puedo mostrar el catálogo en este momento."
+    id_empresa = ctx.id_empresa
 
     try:
         result = await buscar_productos_servicios(
