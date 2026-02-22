@@ -1,25 +1,76 @@
 """
-Logging mínimo para el agente de ventas.
+Sistema de logging centralizado para el agente de ventas.
+Configura logging consistente en toda la aplicación.
 """
 
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
 
-
-def get_logger(name: str) -> logging.Logger:
-    """Devuelve un logger con el nombre dado."""
-    return logging.getLogger(name)
+# Niveles de log
+DEBUG = logging.DEBUG
+INFO = logging.INFO
+WARNING = logging.WARNING
+ERROR = logging.ERROR
+CRITICAL = logging.CRITICAL
 
 
 def setup_logging(
-    level: str = "INFO",
+    level: int = logging.INFO,
     log_file: Optional[str] = None,
+    log_format: Optional[str] = None
 ) -> None:
-    """Configura el logging global. Opcional; main puede llamarlo."""
-    lvl = getattr(logging, level.upper(), logging.INFO)
-    fmt = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    logging.basicConfig(level=lvl, format=fmt)
+    """
+    Configura el sistema de logging para toda la aplicación.
+
+    Args:
+        level: Nivel de logging (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_file: Ruta al archivo de log (opcional)
+        log_format: Formato personalizado de log (opcional)
+    """
+    if log_format is None:
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+
+    handlers = [logging.StreamHandler(sys.stdout)]
+
     if log_file:
-        handler = logging.FileHandler(log_file, encoding="utf-8")
-        handler.setFormatter(logging.Formatter(fmt))
-        logging.getLogger().addHandler(handler)
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+
+    logging.basicConfig(
+        level=level,
+        format=log_format,
+        handlers=handlers,
+        force=True  # Sobreescribir configuración existente
+    )
+
+    # Silenciar loggers ruidosos de terceros
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("langchain").setLevel(logging.WARNING)
+
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    Obtiene un logger con el nombre especificado.
+
+    Args:
+        name: Nombre del logger (usualmente __name__ del módulo)
+
+    Returns:
+        Logger configurado
+
+    Example:
+        >>> logger = get_logger(__name__)
+        >>> logger.info("Mensaje de log")
+    """
+    return logging.getLogger(name)
+
+
+# Logger por defecto para uso rápido
+logger = get_logger("ventas")
+
+__all__ = ["setup_logging", "get_logger", "logger", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
