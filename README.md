@@ -259,6 +259,7 @@ Todos los servicios consumen el mismo endpoint `API_INFORMACION_URL` mediante un
 | `obtener_categorias()` | `OBTENER_CATEGORIAS` | Categorías del catálogo de productos |
 | `obtener_sucursales()` | `OBTENER_SUCURSALES_PUBLICAS` | Sucursales con dirección y horarios |
 | `obtener_metodos_pago()` | `OBTENER_METODOS_PAGO` | Bancos y billeteras digitales (Yape, Plin) |
+| `fetch_contexto_negocio()` | `OBTENER_CONTEXTO_NEGOCIO` | Contexto del negocio (se inyecta en el system prompt cuando está disponible; cache TTL, circuit breaker y retry) |
 | `buscar_productos_servicios()` | `BUSCAR_PRODUCTOS_SERVICIOS_VENTAS_DIRECTAS` | Búsqueda en catálogo |
 
 El cliente HTTP es un `httpx.AsyncClient` compartido (lazy-init) que se cierra limpiamente al apagar el servidor.
@@ -271,7 +272,7 @@ El cliente HTTP es un `httpx.AsyncClient` compartido (lazy-init) que se cierra l
 El agente detecta automáticamente URLs de imágenes en los mensajes del usuario (formatos: jpg, jpeg, png, gif, webp) y las envía al modelo como bloques de visión de OpenAI. Esto permite validar comprobantes de pago enviados como capturas de pantalla.
 
 ### System prompt dinámico con Jinja2
-El prompt del sistema se genera en cada sesión con datos reales del negocio: categorías actualizadas, sucursales con horarios compactos y métodos de pago vigentes. Si alguna API falla, el agente continúa funcionando con valores por defecto (degradación graceful).
+El prompt del sistema se genera en cada sesión con datos reales del negocio: categorías actualizadas, sucursales con horarios compactos, métodos de pago vigentes y contexto de negocio (cuando la API lo devuelve). Si alguna API falla, el agente continúa funcionando con valores por defecto (degradación graceful).
 
 ### Memoria de sesión
 Usa `InMemorySaver` de LangGraph para mantener el historial de conversación dentro de una sesión. El `thread_id` se deriva del `session_id` recibido del orquestador, garantizando continuidad de contexto entre mensajes.
@@ -282,4 +283,4 @@ Usa `InMemorySaver` de LangGraph para mantener el historial de conversación den
 - `CHAT_TIMEOUT`: límite global por mensaje completo (incluye tool calls y razonamiento)
 
 ### Logging estructurado
-Prefijos por módulo (`[MCP]`, `[AGENT]`, `[TOOL]`, `[API_INFORMACION]`) para facilitar el rastreo de flujos en producción. Nivel y destino configurables vía variables de entorno.
+Prefijos por módulo (`[MCP]`, `[AGENT]`, `[TOOL]`, `[API_INFORMACION]`, `[CONTEXTO_NEGOCIO]`) para facilitar el rastreo de flujos en producción. Nivel y destino configurables vía variables de entorno.

@@ -12,6 +12,12 @@ Tienes memoria solo de la conversación en este agente (ventas). Úsala para no 
 
 Eres {{ personalidad }}.
 
+{% if contexto_negocio %}
+## Información del negocio
+
+{{ contexto_negocio }}
+{% endif %}
+
 ## Formato de respuestas (WhatsApp)
 
 Tus mensajes se envían por WhatsApp. Sigue estas reglas:

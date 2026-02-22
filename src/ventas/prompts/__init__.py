@@ -11,10 +11,12 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 try:
     from ..services.categorias import obtener_categorias
+    from ..services.contexto_negocio import fetch_contexto_negocio
     from ..services.metodos_pago import obtener_metodos_pago
     from ..services.sucursales import obtener_sucursales
 except ImportError:
     from ventas.services.categorias import obtener_categorias
+    from ventas.services.contexto_negocio import fetch_contexto_negocio
     from ventas.services.metodos_pago import obtener_metodos_pago
     from ventas.services.sucursales import obtener_sucursales
 
@@ -60,10 +62,11 @@ async def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
     id_empresa = config.get("id_empresa")
     if id_empresa is not None:
         id_emp = int(id_empresa)
-        r_cat, r_suc, r_med = await asyncio.gather(
+        r_cat, r_suc, r_med, r_ctx = await asyncio.gather(
             obtener_categorias(id_emp),
             obtener_sucursales(id_emp),
             obtener_metodos_pago(id_emp),
+            fetch_contexto_negocio(id_emp),
             return_exceptions=True,
         )
         # Degradación elegante: si una tarea lanzó, usar el mismo default que ese servicio
@@ -74,21 +77,26 @@ async def build_ventas_system_prompt(config: Dict[str, Any]) -> str:
         informacion_productos = _default_categorias if isinstance(r_cat, BaseException) else r_cat
         informacion_sucursales = "" if isinstance(r_suc, BaseException) else r_suc
         medios_pago_texto = "" if isinstance(r_med, BaseException) else r_med
+        contexto_negocio = r_ctx if not isinstance(r_ctx, BaseException) else None
         if isinstance(r_cat, BaseException):
             logger.warning("[PROMPT] categorías falló: %s - %s", type(r_cat).__name__, r_cat)
         if isinstance(r_suc, BaseException):
             logger.warning("[PROMPT] sucursales falló: %s - %s", type(r_suc).__name__, r_suc)
         if isinstance(r_med, BaseException):
             logger.warning("[PROMPT] medios de pago falló: %s - %s", type(r_med).__name__, r_med)
+        if isinstance(r_ctx, BaseException):
+            logger.warning("[PROMPT] contexto_negocio falló: %s - %s", type(r_ctx).__name__, r_ctx)
         variables["informacion_productos_servicios"] = informacion_productos
         variables["informacion_sucursales"] = informacion_sucursales
         variables["medios_pago"] = medios_pago_texto or variables.get("medios_pago", "")
+        variables["contexto_negocio"] = contexto_negocio
     else:
         variables["informacion_productos_servicios"] = (
             "No hay información de productos y servicios cargada. "
             "Usa la herramienta search_productos_servicios cuando pregunten por algo concreto."
         )
         variables["informacion_sucursales"] = ""
+        variables["contexto_negocio"] = None
         # medios_pago queda con el default de _apply_defaults (vacío) o el que venga en config
 
     return template.render(**variables)
