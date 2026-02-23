@@ -10,8 +10,10 @@ from cachetools import TTLCache
 
 try:
     from ..services.api_informacion import post_informacion
+    from ..services._resilience import resilient_call
 except ImportError:
     from ventas.services.api_informacion import post_informacion
+    from ventas.services._resilience import resilient_call
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,9 @@ MAX_SUCURSALES = 5
 
 # Cache TTL 1h (mismo criterio que contexto_negocio y preguntas_frecuentes)
 _sucursales_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
+
+# Circuit breaker: auto-reset a los 5 min
+_sucursales_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def _norm(s: str | None) -> str:
@@ -130,9 +135,14 @@ async def obtener_sucursales(id_empresa: int) -> str:
     payload = {"codOpe": COD_OPE, "id_empresa": id_empresa}
 
     try:
-        data = await post_informacion(payload)
+        data = await resilient_call(
+            lambda: post_informacion(payload),
+            failures=_sucursales_failures,
+            circuit_key=id_empresa,
+            service_name="SUCURSALES",
+        )
     except Exception as e:
-        logger.warning("[SUCURSALES] Error al obtener sucursales id_empresa=%s: %s", id_empresa, e)
+        logger.warning("[SUCURSALES] No se pudo obtener sucursales id_empresa=%s: %s", id_empresa, e)
         return ""
 
     if not data.get("success"):

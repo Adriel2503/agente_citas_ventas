@@ -6,20 +6,24 @@ Formato Pregunta/Respuesta para que el modelo entienda y use las FAQs.
 import logging
 from typing import Any
 
-import httpx
 from cachetools import TTLCache
 
 try:
     from .. import config as app_config
     from .api_informacion import get_client
+    from ._resilience import resilient_call
 except ImportError:
     from ventas import config as app_config
     from ventas.services.api_informacion import get_client
+    from ventas.services._resilience import resilient_call
 
 logger = logging.getLogger(__name__)
 
 # Cache TTL por id_chatbot (1 hora), mismo criterio que contexto_negocio
 _preguntas_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
+
+# Circuit breaker: auto-reset a los 5 min
+_preguntas_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def format_preguntas_frecuentes_para_prompt(items: list[dict[str, Any]]) -> str:
@@ -74,7 +78,8 @@ async def fetch_preguntas_frecuentes(id_chatbot: Any | None) -> str:
         return cached if cached else ""
 
     payload = {"id_chatbot": id_chatbot}
-    try:
+
+    async def _fetch() -> dict:
         logger.debug("[PREGUNTAS_FRECUENTES] Obteniendo FAQs id_chatbot=%s", id_chatbot)
         client = get_client()
         response = await client.post(
@@ -82,24 +87,30 @@ async def fetch_preguntas_frecuentes(id_chatbot: Any | None) -> str:
             json=payload,
         )
         response.raise_for_status()
-        data = response.json()
-        if not data.get("success"):
-            logger.warning("[PREGUNTAS_FRECUENTES] API sin éxito id_chatbot=%s: %s", id_chatbot, data.get("error"))
-            return ""
-        items = data.get("preguntas_frecuentes") or []
-        if not items:
-            logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s, sin preguntas", id_chatbot)
-            return ""
-        logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s, %s preguntas", id_chatbot, len(items))
-        formatted = format_preguntas_frecuentes_para_prompt(items)
-        _preguntas_cache[id_chatbot] = formatted
-        return formatted
-    except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
-        logger.warning("[PREGUNTAS_FRECUENTES] Error de red id_chatbot=%s: %s", id_chatbot, e)
-        return ""
+        return response.json()
+
+    try:
+        data = await resilient_call(
+            _fetch,
+            failures=_preguntas_failures,
+            circuit_key=id_chatbot,
+            service_name="PREGUNTAS_FRECUENTES",
+        )
     except Exception as e:
-        logger.error("[PREGUNTAS_FRECUENTES] Error inesperado id_chatbot=%s: %s", id_chatbot, e, exc_info=True)
+        logger.warning("[PREGUNTAS_FRECUENTES] No se pudo obtener FAQs id_chatbot=%s: %s", id_chatbot, e)
         return ""
+
+    if not data.get("success"):
+        logger.warning("[PREGUNTAS_FRECUENTES] API sin éxito id_chatbot=%s: %s", id_chatbot, data.get("error"))
+        return ""
+    items = data.get("preguntas_frecuentes") or []
+    if not items:
+        logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s, sin preguntas", id_chatbot)
+        return ""
+    logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s, %s preguntas", id_chatbot, len(items))
+    formatted = format_preguntas_frecuentes_para_prompt(items)
+    _preguntas_cache[id_chatbot] = formatted
+    return formatted
 
 
 __all__ = ["fetch_preguntas_frecuentes", "format_preguntas_frecuentes_para_prompt"]

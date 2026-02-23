@@ -10,8 +10,10 @@ from cachetools import TTLCache
 
 try:
     from ..services.api_informacion import post_informacion
+    from ..services._resilience import resilient_call
 except ImportError:
     from ventas.services.api_informacion import post_informacion
+    from ventas.services._resilience import resilient_call
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,9 @@ COD_OPE = "OBTENER_METODOS_PAGO"
 
 # Cache TTL 1h (mismo criterio que contexto_negocio y preguntas_frecuentes)
 _metodos_pago_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
+
+# Circuit breaker: auto-reset a los 5 min
+_metodos_pago_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def _norm(s: Any) -> str:
@@ -97,9 +102,14 @@ async def obtener_metodos_pago(id_empresa: int) -> str:
     payload = {"codOpe": COD_OPE, "id_empresa": id_empresa}
 
     try:
-        data = await post_informacion(payload)
+        data = await resilient_call(
+            lambda: post_informacion(payload),
+            failures=_metodos_pago_failures,
+            circuit_key=id_empresa,
+            service_name="METODOS_PAGO",
+        )
     except Exception as e:
-        logger.warning("[METODOS_PAGO] Error al obtener métodos de pago id_empresa=%s: %s", id_empresa, e)
+        logger.warning("[METODOS_PAGO] No se pudo obtener métodos de pago id_empresa=%s: %s", id_empresa, e)
         return ""
 
     if not data.get("success"):

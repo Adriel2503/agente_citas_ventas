@@ -11,8 +11,10 @@ from cachetools import TTLCache
 
 try:
     from ..services.api_informacion import post_informacion
+    from ..services._resilience import resilient_call
 except ImportError:
     from ventas.services.api_informacion import post_informacion
+    from ventas.services._resilience import resilient_call
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,9 @@ MAX_ITEMS = 15
 
 # Cache TTL 1h (mismo criterio que contexto_negocio y preguntas_frecuentes)
 _categorias_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
+
+# Circuit breaker: auto-reset a los 5 min (mismo TTL que contexto_negocio)
+_categorias_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def _clean_text(text: str | None, max_chars: int = 200) -> str:
@@ -80,9 +85,14 @@ async def obtener_categorias(id_empresa: int) -> str:
     payload = {"codOpe": COD_OPE, "id_empresa": id_empresa}
 
     try:
-        data = await post_informacion(payload)
+        data = await resilient_call(
+            lambda: post_informacion(payload),
+            failures=_categorias_failures,
+            circuit_key=id_empresa,
+            service_name="CATEGORIAS",
+        )
     except Exception as e:
-        logger.warning("[CATEGORIAS] Error al obtener categorías id_empresa=%s: %s", id_empresa, e)
+        logger.warning("[CATEGORIAS] No se pudo obtener categorías id_empresa=%s: %s", id_empresa, e)
         return _DEFAULT_MSG
 
     if not data.get("success"):
