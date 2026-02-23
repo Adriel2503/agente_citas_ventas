@@ -53,10 +53,9 @@ _busqueda_cache: TTLCache = TTLCache(maxsize=2000, ttl=900)
 _busqueda_failures: TTLCache = TTLCache(maxsize=500, ttl=180)  # 3 min auto-reset
 _FAILURE_THRESHOLD = 3
 
-# Anti-thundering herd: Tasks en vuelo por (id_empresa, búsqueda).
-# Key = cache_key (misma tupla que _busqueda_cache).
-# Las entradas se limpian en finally → el dict nunca acumula entradas viejas.
-_busqueda_inflight: dict[tuple, asyncio.Task] = {}
+# Lock por (id_empresa, búsqueda) para anti-thundering herd.
+# Mismo patrón que agent_citas. Limpiado en finally.
+_busqueda_locks: dict[tuple, asyncio.Lock] = {}
 
 
 def _is_circuit_open(id_empresa: int) -> bool:
@@ -255,9 +254,6 @@ async def buscar_productos_servicios(
             "error": "El servicio de búsqueda no está disponible temporalmente. Intenta en unos minutos.",
         }
 
-    # 3. Cache miss — se va a la red
-    SEARCH_CACHE.labels(result="miss").inc()
-
     payload = {
         "codOpe": COD_OPE,
         "id_empresa": id_empresa,
@@ -265,24 +261,27 @@ async def buscar_productos_servicios(
         "limite": MAX_RESULTADOS,
     }
 
-    # 4. Anti-thundering herd: si ya hay un request en vuelo para este término,
-    #    esperar ese Task en lugar de generar una segunda llamada idéntica a la API.
-    #    asyncio.shield protege el Task subyacente de cancelaciones externas.
-    if cache_key in _busqueda_inflight:
-        logger.debug(
-            "[BUSQUEDA] Esperando request en vuelo id_empresa=%s busqueda=%r",
-            id_empresa, busqueda_norm,
-        )
-        return await asyncio.shield(_busqueda_inflight[cache_key])
-
-    task = asyncio.create_task(
-        _do_busqueda_api(id_empresa, busqueda_norm, cache_key, payload, log_search_apis)
-    )
-    _busqueda_inflight[cache_key] = task
+    # 3. Anti-thundering herd: Lock por (id_empresa, búsqueda) + double-check.
+    #    Mismo patrón que agent_citas.
+    lock = _busqueda_locks.setdefault(cache_key, asyncio.Lock())
     try:
-        return await task
+        async with lock:
+            # Double-check: otro request puede haber populado el cache
+            # mientras esperábamos el lock
+            if cache_key in _busqueda_cache:
+                SEARCH_CACHE.labels(result="hit").inc()
+                logger.debug(
+                    "[BUSQUEDA] Cache HIT (post-lock) id_empresa=%s busqueda=%r",
+                    id_empresa, busqueda_norm,
+                )
+                return _busqueda_cache[cache_key]
+
+            SEARCH_CACHE.labels(result="miss").inc()
+            return await _do_busqueda_api(
+                id_empresa, busqueda_norm, cache_key, payload, log_search_apis
+            )
     finally:
-        _busqueda_inflight.pop(cache_key, None)
+        _busqueda_locks.pop(cache_key, None)
 
 
 __all__ = ["buscar_productos_servicios", "format_productos_para_respuesta"]

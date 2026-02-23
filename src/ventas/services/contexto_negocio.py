@@ -25,10 +25,9 @@ _contexto_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)  # id_empresa -> con
 _contexto_failures: TTLCache = TTLCache(maxsize=500, ttl=300)  # id_empresa -> failure_count (int)
 _contexto_failure_threshold = 3
 
-# Anti-thundering herd: Tasks en vuelo por id_empresa.
-# Si N coroutines llegan al cache miss simultáneamente, solo la primera llama a la API;
-# las demás esperan ese Task en lugar de generar N llamadas idénticas.
-_contexto_inflight: dict[Any, asyncio.Task] = {}
+# Lock por id_empresa para anti-thundering herd.
+# Mismo patrón que agent_citas (horario_cache.py).
+_contexto_locks: dict[Any, asyncio.Lock] = {}
 
 
 def _is_contexto_circuit_open(id_empresa: Any) -> bool:
@@ -40,7 +39,7 @@ def _is_contexto_circuit_open(id_empresa: Any) -> bool:
 async def _do_fetch_contexto(id_empresa: Any) -> str | None:
     """
     Ejecuta la llamada real a la API con retry con backoff y actualiza el circuit breaker.
-    Se llama SOLO desde fetch_contexto_negocio, dentro de un asyncio.Task.
+    Se llama SOLO desde fetch_contexto_negocio, dentro del lock de _contexto_locks.
     """
     max_retries = 2
     payload = {
@@ -102,7 +101,7 @@ async def fetch_contexto_negocio(id_empresa: Any | None) -> str | None:
     """
     Obtiene el contexto de negocio desde la API para inyectar en el system prompt.
     Incluye cache TTL (1 h), circuit breaker (3 fallos → abierto 5 min),
-    retry con backoff y deduplicación de requests en vuelo (anti-thundering herd).
+    retry con backoff y deduplicación via Lock por empresa (anti-thundering herd).
 
     Args:
         id_empresa: ID de la empresa (int o str). Si es None, retorna None.
@@ -127,20 +126,23 @@ async def fetch_contexto_negocio(id_empresa: Any | None) -> str | None:
         logger.warning("[CONTEXTO_NEGOCIO] Circuit abierto para id_empresa=%s", id_empresa)
         return None
 
-    # 3. Anti-thundering herd: si ya hay un request en vuelo para esta empresa, esperar ese Task.
-    #    asyncio.shield evita que una cancelación del waiter cancele el Task subyacente,
-    #    protegiendo a las demás coroutines que también esperan el mismo resultado.
-    if id_empresa in _contexto_inflight:
-        logger.debug("[CONTEXTO_NEGOCIO] Esperando request en vuelo id_empresa=%s", id_empresa)
-        return await asyncio.shield(_contexto_inflight[id_empresa])
-
-    # 4. Nuevo request: crear Task, registrarlo, limpiar siempre en finally.
-    task = asyncio.create_task(_do_fetch_contexto(id_empresa))
-    _contexto_inflight[id_empresa] = task
+    # 3. Anti-thundering herd: Lock por empresa + double-check post-lock.
+    #    Mismo patrón que agent_citas (horario_cache.py).
+    lock = _contexto_locks.setdefault(id_empresa, asyncio.Lock())
     try:
-        return await task
+        async with lock:
+            # Double-check: otro request puede haber populado el cache
+            # mientras esperábamos el lock
+            if id_empresa in _contexto_cache:
+                contexto = _contexto_cache[id_empresa]
+                logger.debug(
+                    "[CONTEXTO_NEGOCIO] Cache HIT (post-lock) id_empresa=%s",
+                    id_empresa,
+                )
+                return contexto if contexto else None
+            return await _do_fetch_contexto(id_empresa)
     finally:
-        _contexto_inflight.pop(id_empresa, None)
+        _contexto_locks.pop(id_empresa, None)
 
 
 __all__ = ["fetch_contexto_negocio"]

@@ -6,9 +6,9 @@ Diseño de cache:
   - _agent_cache: TTLCache keyed by id_empresa. Un agente por empresa sirve
     a todos los usuarios de esa empresa usando distintos thread_ids en el
     checkpointer (InMemorySaver). TTL configurable vía AGENT_CACHE_TTL.
-  - _building: dict de asyncio.Task en vuelo para evitar thundering herd:
-    si N requests llegan en cache miss simultáneo para la misma empresa,
-    solo el primero construye; el resto espera ese Task.
+  - _agent_locks: Lock por empresa para anti-thundering herd (patrón agent_citas).
+    Si N requests llegan en cache miss simultáneo para la misma empresa,
+    serializan via lock; solo el primero construye, los demás hacen double-check.
 """
 
 import asyncio
@@ -54,8 +54,9 @@ _agent_cache: TTLCache = TTLCache(
     ttl=app_config.AGENT_CACHE_TTL,
 )
 
-# Tasks en vuelo por empresa (anti-thundering herd).
-_building: dict[int, asyncio.Task] = {}
+# Lock por empresa para anti-thundering herd (patrón agent_citas).
+# Limpiado en finally de _get_agent → no acumula entradas.
+_agent_locks: dict[int, asyncio.Lock] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -127,35 +128,35 @@ async def _get_agent(config: dict[str, Any]):
     Retorna el agente para esta empresa.
 
     - Fast path (cache hit): O(1), sin I/O.
-    - Slow path (cache miss): construye el agente y lo cachea.
-    - Anti-thundering herd: N requests concurrentes en miss comparten
-      un único asyncio.Task; solo uno construye, los demás esperan.
+    - Slow path (cache miss): Lock por empresa + double-check post-lock.
+      N requests concurrentes serializan; solo el primero construye.
+      Mismo patrón que agent_citas.
     """
     id_empresa: int = config["id_empresa"]
 
-    # Fast path
+    # Fast path — sin lock
     if id_empresa in _agent_cache:
         AGENT_CACHE.labels(result="hit").inc()
         logger.debug("[AGENT] Cache HIT id_empresa=%s", id_empresa)
         return _agent_cache[id_empresa]
 
-    # Si ya hay un build en curso para esta empresa, esperar ese Task
-    if id_empresa in _building:
-        logger.debug("[AGENT] Esperando build en curso id_empresa=%s", id_empresa)
-        return await asyncio.shield(_building[id_empresa])
-
-    # Iniciar build y registrar el Task para que otros puedan unirse
-    AGENT_CACHE.labels(result="miss").inc()
-    logger.info("[AGENT] Cache MISS id_empresa=%s — iniciando build", id_empresa)
-    task = asyncio.create_task(_build_agent_for_empresa(id_empresa, config))
-    _building[id_empresa] = task
+    lock = _agent_locks.setdefault(id_empresa, asyncio.Lock())
     try:
-        agent = await task
-        _agent_cache[id_empresa] = agent
-        return agent
+        async with lock:
+            # Double-check: otro request puede haber construido el agente
+            # mientras esperábamos el lock
+            if id_empresa in _agent_cache:
+                AGENT_CACHE.labels(result="hit").inc()
+                logger.debug("[AGENT] Cache HIT (post-lock) id_empresa=%s", id_empresa)
+                return _agent_cache[id_empresa]
+
+            AGENT_CACHE.labels(result="miss").inc()
+            logger.info("[AGENT] Cache MISS id_empresa=%s — iniciando build", id_empresa)
+            agent = await _build_agent_for_empresa(id_empresa, config)
+            _agent_cache[id_empresa] = agent
+            return agent
     finally:
-        # Limpiar siempre, incluso si el build falló
-        _building.pop(id_empresa, None)
+        _agent_locks.pop(id_empresa, None)
 
 
 def _prepare_agent_context(context: dict[str, Any], session_id: int) -> AgentContext:
