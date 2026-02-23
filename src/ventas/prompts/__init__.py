@@ -3,26 +3,27 @@ Prompts del agente de ventas. Builder del system prompt.
 """
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any, Dict
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 try:
+    from ..logger import get_logger
     from ..services.categorias import obtener_categorias
     from ..services.contexto_negocio import fetch_contexto_negocio
     from ..services.metodos_pago import obtener_metodos_pago
     from ..services.preguntas_frecuentes import fetch_preguntas_frecuentes
     from ..services.sucursales import obtener_sucursales
 except ImportError:
+    from ventas.logger import get_logger
     from ventas.services.categorias import obtener_categorias
     from ventas.services.contexto_negocio import fetch_contexto_negocio
     from ventas.services.metodos_pago import obtener_metodos_pago
     from ventas.services.preguntas_frecuentes import fetch_preguntas_frecuentes
     from ventas.services.sucursales import obtener_sucursales
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent
 

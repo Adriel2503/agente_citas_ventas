@@ -119,4 +119,4 @@ async def obtener_metodos_pago(id_empresa: int) -> str:
     return resultado
 
 
-__all__ = ["obtener_metodos_pago", "_format_metodos_pago_para_prompt"]
+__all__ = ["obtener_metodos_pago"]

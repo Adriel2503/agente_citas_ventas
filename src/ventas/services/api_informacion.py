@@ -10,9 +10,9 @@ from typing import Any, Dict, Optional
 import httpx
 
 try:
-    from ..config import config as app_config
+    from .. import config as app_config
 except ImportError:
-    from ventas.config import config as app_config
+    from ventas import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +71,10 @@ async def post_informacion(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         raise
     except Exception as e:
-        logger.warning(
-            "[API_INFORMACION] %s (codOpe=%s): %s",
-            type(e).__name__,
-            cod_ope,
-            e,
+        logger.error(
+            "[API_INFORMACION] Error inesperado (codOpe=%s): %s: %s",
+            cod_ope, type(e).__name__, e,
+            exc_info=True,
         )
         raise
 

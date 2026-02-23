@@ -67,11 +67,10 @@ async def fetch_preguntas_frecuentes(id_chatbot: Optional[Any]) -> str:
     if id_chatbot in _preguntas_cache:
         cached = _preguntas_cache[id_chatbot]
         logger.debug(
-            "[PREGUNTAS_FRECUENTES] Cache hit id_chatbot=%s (valor=%s)",
+            "[PREGUNTAS_FRECUENTES] Cache HIT id_chatbot=%s (%s)",
             id_chatbot,
             "vacío" if not cached else "presente",
         )
-        logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s (cache)", id_chatbot)
         return cached if cached else ""
 
     payload = {"id_chatbot": id_chatbot}
@@ -85,7 +84,7 @@ async def fetch_preguntas_frecuentes(id_chatbot: Optional[Any]) -> str:
         response.raise_for_status()
         data = response.json()
         if not data.get("success"):
-            logger.info("[PREGUNTAS_FRECUENTES] Respuesta recibida id_chatbot=%s, API sin éxito: %s", id_chatbot, data.get("error"))
+            logger.warning("[PREGUNTAS_FRECUENTES] API sin éxito id_chatbot=%s: %s", id_chatbot, data.get("error"))
             return ""
         items = data.get("preguntas_frecuentes") or []
         if not items:
@@ -95,13 +94,11 @@ async def fetch_preguntas_frecuentes(id_chatbot: Optional[Any]) -> str:
         formatted = format_preguntas_frecuentes_para_prompt(items)
         _preguntas_cache[id_chatbot] = formatted
         return formatted
-    except (httpx.TimeoutException, httpx.RequestError, Exception) as e:
-        logger.info("[PREGUNTAS_FRECUENTES] No se pudo obtener FAQs id_chatbot=%s: %s", id_chatbot, e)
-        logger.debug(
-            "[PREGUNTAS_FRECUENTES] Error id_chatbot=%s: %s",
-            id_chatbot,
-            e,
-        )
+    except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
+        logger.warning("[PREGUNTAS_FRECUENTES] Error de red id_chatbot=%s: %s", id_chatbot, e)
+        return ""
+    except Exception as e:
+        logger.error("[PREGUNTAS_FRECUENTES] Error inesperado id_chatbot=%s: %s", id_chatbot, e, exc_info=True)
         return ""
 
 

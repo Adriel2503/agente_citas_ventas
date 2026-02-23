@@ -49,11 +49,7 @@ async def fetch_contexto_negocio(id_empresa: Optional[Any]) -> Optional[str]:
     if id_empresa in _contexto_cache:
         contexto = _contexto_cache[id_empresa]
         logger.debug(
-            "[CONTEXTO_NEGOCIO] Cache hit id_empresa=%s (valor=%s)",
-            id_empresa, "vacío" if not contexto else "presente"
-        )
-        logger.info(
-            "[CONTEXTO_NEGOCIO] Respuesta recibida id_empresa=%s (cache), longitud=%s caracteres",
+            "[CONTEXTO_NEGOCIO] Cache HIT id_empresa=%s (%s caracteres)",
             id_empresa, len(contexto) if contexto else 0
         )
         return contexto if contexto else None
@@ -79,8 +75,8 @@ async def fetch_contexto_negocio(id_empresa: Optional[Any]) -> Optional[str]:
             )
             data = await post_informacion(payload)
             if not data.get("success"):
-                logger.info(
-                    "[CONTEXTO_NEGOCIO] Respuesta recibida id_empresa=%s, API sin éxito: %s",
+                logger.warning(
+                    "[CONTEXTO_NEGOCIO] API sin éxito id_empresa=%s: %s",
                     id_empresa, data.get("error")
                 )
                 return None
@@ -98,19 +94,22 @@ async def fetch_contexto_negocio(id_empresa: Optional[Any]) -> Optional[str]:
             return contexto if contexto else None
         except Exception as e:
             failed_by_exception = True
-            logger.debug(
-                "[CONTEXTO_NEGOCIO] Error intento %d/%d id_empresa=%s: %s",
-                attempt + 1, max_retries, id_empresa, e
+            logger.warning(
+                "[CONTEXTO_NEGOCIO] Error intento %d/%d id_empresa=%s: %s: %s",
+                attempt + 1, max_retries, id_empresa, type(e).__name__, e
             )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
 
     # Solo incrementar circuit breaker cuando falló por excepción (red/timeout), no por success: false
     if failed_by_exception:
-        logger.debug("[CONTEXTO_NEGOCIO] Fallos para id_empresa=%s", id_empresa)
         current = _contexto_failures.get(id_empresa, 0)
         _contexto_failures[id_empresa] = current + 1
-    logger.info(
+        logger.warning(
+            "[CONTEXTO_NEGOCIO] Circuit breaker id_empresa=%s: fallos acumulados=%s/%s",
+            id_empresa, current + 1, _contexto_failure_threshold
+        )
+    logger.warning(
         "[CONTEXTO_NEGOCIO] No se pudo obtener contexto id_empresa=%s tras %d intentos",
         id_empresa, max_retries
     )
