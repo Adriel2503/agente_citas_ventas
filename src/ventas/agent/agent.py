@@ -13,7 +13,7 @@ Diseño de cache:
 
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 from dataclasses import dataclass
 
 from cachetools import TTLCache
