@@ -2,6 +2,7 @@
 Contexto de negocio: fetch desde API MaravIA para el system prompt.
 Usa OBTENER_CONTEXTO_NEGOCIO (ws_informacion_ia.php).
 Mismo patrón que agent_citas: cache TTL + circuit breaker + retry con backoff.
+Anti-thundering herd: dict de Tasks en vuelo por id_empresa (mismo patrón que agent.py).
 """
 
 import asyncio
@@ -24,6 +25,11 @@ _contexto_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)  # id_empresa -> con
 _contexto_failures: TTLCache = TTLCache(maxsize=500, ttl=300)  # id_empresa -> failure_count (int)
 _contexto_failure_threshold = 3
 
+# Anti-thundering herd: Tasks en vuelo por id_empresa.
+# Si N coroutines llegan al cache miss simultáneamente, solo la primera llama a la API;
+# las demás esperan ese Task en lugar de generar N llamadas idénticas.
+_contexto_inflight: dict[Any, asyncio.Task] = {}
+
 
 def _is_contexto_circuit_open(id_empresa: Any) -> bool:
     """True si el circuit breaker está abierto para esta empresa."""
@@ -31,35 +37,11 @@ def _is_contexto_circuit_open(id_empresa: Any) -> bool:
     return failure_count >= _contexto_failure_threshold
 
 
-async def fetch_contexto_negocio(id_empresa: Any | None) -> str | None:
+async def _do_fetch_contexto(id_empresa: Any) -> str | None:
     """
-    Obtiene el contexto de negocio desde la API para inyectar en el system prompt.
-    Incluye cache TTL (1 h), circuit breaker (3 fallos -> abierto 5 min) y retry con backoff.
-
-    Args:
-        id_empresa: ID de la empresa (int o str). Si es None, retorna None.
-
-    Returns:
-        String con el contexto de negocio o None si no hay o falla.
+    Ejecuta la llamada real a la API con retry con backoff y actualiza el circuit breaker.
+    Se llama SOLO desde fetch_contexto_negocio, dentro de un asyncio.Task.
     """
-    if id_empresa is None or id_empresa == "":
-        return None
-
-    # 1. Cache
-    if id_empresa in _contexto_cache:
-        contexto = _contexto_cache[id_empresa]
-        logger.debug(
-            "[CONTEXTO_NEGOCIO] Cache HIT id_empresa=%s (%s caracteres)",
-            id_empresa, len(contexto) if contexto else 0
-        )
-        return contexto if contexto else None
-
-    # 2. Circuit breaker
-    if _is_contexto_circuit_open(id_empresa):
-        logger.warning("[CONTEXTO_NEGOCIO] Circuit abierto para id_empresa=%s", id_empresa)
-        return None
-
-    # 3. Retry con backoff (2 intentos, 1s y 2s)
     max_retries = 2
     payload = {
         "codOpe": "OBTENER_CONTEXTO_NEGOCIO",
@@ -114,6 +96,51 @@ async def fetch_contexto_negocio(id_empresa: Any | None) -> str | None:
         id_empresa, max_retries
     )
     return None
+
+
+async def fetch_contexto_negocio(id_empresa: Any | None) -> str | None:
+    """
+    Obtiene el contexto de negocio desde la API para inyectar en el system prompt.
+    Incluye cache TTL (1 h), circuit breaker (3 fallos → abierto 5 min),
+    retry con backoff y deduplicación de requests en vuelo (anti-thundering herd).
+
+    Args:
+        id_empresa: ID de la empresa (int o str). Si es None, retorna None.
+
+    Returns:
+        String con el contexto de negocio o None si no hay o falla.
+    """
+    if id_empresa is None or id_empresa == "":
+        return None
+
+    # 1. Cache
+    if id_empresa in _contexto_cache:
+        contexto = _contexto_cache[id_empresa]
+        logger.debug(
+            "[CONTEXTO_NEGOCIO] Cache HIT id_empresa=%s (%s caracteres)",
+            id_empresa, len(contexto) if contexto else 0
+        )
+        return contexto if contexto else None
+
+    # 2. Circuit breaker
+    if _is_contexto_circuit_open(id_empresa):
+        logger.warning("[CONTEXTO_NEGOCIO] Circuit abierto para id_empresa=%s", id_empresa)
+        return None
+
+    # 3. Anti-thundering herd: si ya hay un request en vuelo para esta empresa, esperar ese Task.
+    #    asyncio.shield evita que una cancelación del waiter cancele el Task subyacente,
+    #    protegiendo a las demás coroutines que también esperan el mismo resultado.
+    if id_empresa in _contexto_inflight:
+        logger.debug("[CONTEXTO_NEGOCIO] Esperando request en vuelo id_empresa=%s", id_empresa)
+        return await asyncio.shield(_contexto_inflight[id_empresa])
+
+    # 4. Nuevo request: crear Task, registrarlo, limpiar siempre en finally.
+    task = asyncio.create_task(_do_fetch_contexto(id_empresa))
+    _contexto_inflight[id_empresa] = task
+    try:
+        return await task
+    finally:
+        _contexto_inflight.pop(id_empresa, None)
 
 
 __all__ = ["fetch_contexto_negocio"]
