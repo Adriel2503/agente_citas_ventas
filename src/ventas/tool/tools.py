@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 @tool
 async def search_productos_servicios(
     busqueda: str,
-    limite: int = 10,
     runtime: ToolRuntime = None
 ) -> str:
     """
@@ -29,13 +28,12 @@ async def search_productos_servicios(
 
     Args:
         busqueda: Término de búsqueda (ej: "Juego", "laptop", "consulta")
-        limite: Cantidad máxima de resultados (opcional, default 10)
         runtime: Contexto automático (inyectado por LangChain)
 
     Returns:
         Texto con los productos/servicios encontrados (precio, categoría, descripción)
     """
-    logger.debug("[TOOL] search_productos_servicios - busqueda: %s, limite: %s", busqueda, limite)
+    logger.debug("[TOOL] search_productos_servicios - busqueda: %s", busqueda)
 
     ctx = runtime.context if runtime else None
     if not ctx or getattr(ctx, "id_empresa", None) is None:
@@ -48,7 +46,6 @@ async def search_productos_servicios(
         result = await buscar_productos_servicios(
             id_empresa=id_empresa,
             busqueda=busqueda,
-            limite=limite,
             log_search_apis=True,
         )
 

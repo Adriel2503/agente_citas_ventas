@@ -5,6 +5,8 @@ Usa codOpe: BUSCAR_PRODUCTOS_SERVICIOS_VENTAS_DIRECTAS
 Resiliencia:
   - TTLCache 15 min por (id_empresa, búsqueda): absorbe búsquedas repetidas
     del mismo término entre usuarios de la misma empresa.
+  - Anti-thundering herd: si N usuarios buscan el mismo término simultáneamente
+    en cache miss, solo el primero llama a la API; los demás esperan ese Task.
   - Retry: 1 reintento con backoff 0.5s para fallos de red transitorios.
   - Circuit breaker: 3 fallos → corte de 3 min por empresa (auto-reset).
 """
@@ -29,6 +31,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 COD_OPE = "BUSCAR_PRODUCTOS_SERVICIOS_VENTAS_DIRECTAS"
+MAX_RESULTADOS = 10
 
 # ---------------------------------------------------------------------------
 # Cache de búsquedas
@@ -49,6 +52,11 @@ _busqueda_cache: TTLCache = TTLCache(maxsize=2000, ttl=900)
 # las búsquedas devuelven error inmediato hasta que el TTL resetee el contador.
 _busqueda_failures: TTLCache = TTLCache(maxsize=500, ttl=180)  # 3 min auto-reset
 _FAILURE_THRESHOLD = 3
+
+# Anti-thundering herd: Tasks en vuelo por (id_empresa, búsqueda).
+# Key = cache_key (misma tupla que _busqueda_cache).
+# Las entradas se limpian en finally → el dict nunca acumula entradas viejas.
+_busqueda_inflight: dict[tuple, asyncio.Task] = {}
 
 
 def _is_circuit_open(id_empresa: int) -> bool:
@@ -121,25 +129,102 @@ def format_productos_para_respuesta(productos: list[dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Llamada a la API (retry + circuit breaker update)
+# ---------------------------------------------------------------------------
+
+async def _do_busqueda_api(
+    id_empresa: int,
+    busqueda_norm: str,
+    cache_key: tuple,
+    payload: dict[str, Any],
+    log_search_apis: bool,
+) -> dict[str, Any]:
+    """
+    Ejecuta la llamada real a la API con retry. Se llama SOLO desde
+    buscar_productos_servicios, dentro de un asyncio.Task (anti-thundering herd).
+    """
+    if log_search_apis:
+        logger.info("[search_productos_servicios] API: ws_informacion_ia.php - %s", COD_OPE)
+        logger.info("  URL: %s", app_config.API_INFORMACION_URL)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("  Enviado: %s", json.dumps(payload, ensure_ascii=False))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "[BUSQUEDA] POST %s - %s",
+            app_config.API_INFORMACION_URL,
+            json.dumps(payload, ensure_ascii=False),
+        )
+
+    # Retry loop: 1 reintento con backoff 0.5s.
+    # Solo se reintenta en excepciones de red; success:false es respuesta
+    # válida del negocio y no se reintenta.
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            data = await post_informacion(payload)
+
+            if log_search_apis and logger.isEnabledFor(logging.INFO):
+                logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
+
+            if not data.get("success"):
+                error_msg = data.get("error") or data.get("message") or "Error desconocido"
+                logger.warning("[BUSQUEDA] API no success id_empresa=%s: %s", id_empresa, error_msg)
+                return {"success": False, "productos": [], "error": error_msg}
+
+            productos = data.get("productos", [])
+            resultado = {"success": True, "productos": productos, "error": None}
+
+            # Éxito: cachear resultado y resetear circuit breaker
+            _busqueda_cache[cache_key] = resultado
+            _reset_failures(id_empresa)
+            logger.debug(
+                "[BUSQUEDA] Cache SET id_empresa=%s busqueda=%r (%s productos)",
+                id_empresa, busqueda_norm, len(productos),
+            )
+            return resultado
+
+        except Exception as e:
+            logger.warning(
+                "[BUSQUEDA] Error intento %d/%d id_empresa=%s busqueda=%r: %s: %s",
+                attempt + 1, max_retries, id_empresa, busqueda_norm, type(e).__name__, e,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5)
+
+    # Todos los intentos fallaron → actualizar circuit breaker
+    _record_failure(id_empresa)
+    failures = _busqueda_failures.get(id_empresa, 0)
+    if failures >= _FAILURE_THRESHOLD:
+        logger.warning(
+            "[BUSQUEDA] Circuit breaker ABIERTO id_empresa=%s (fallos acumulados=%s)",
+            id_empresa, failures,
+        )
+    return {
+        "success": False,
+        "productos": [],
+        "error": "La búsqueda tardó demasiado o tuvo un error. Intenta de nuevo.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Función principal
 # ---------------------------------------------------------------------------
 
 async def buscar_productos_servicios(
     id_empresa: int,
     busqueda: str,
-    limite: int = 10,
     log_search_apis: bool = False,
 ) -> dict[str, Any]:
     """
     Busca productos y servicios por término (ventas directas).
 
-    Incluye TTLCache 15 min por (id_empresa, búsqueda), 1 reintento con
-    backoff 0.5s y circuit breaker (3 fallos → corte 3 min por empresa).
+    Incluye TTLCache 15 min por (id_empresa, búsqueda), anti-thundering herd,
+    1 reintento con backoff 0.5s y circuit breaker (3 fallos → corte 3 min).
+    Cantidad de resultados fija en MAX_RESULTADOS (10).
 
     Args:
         id_empresa: ID de la empresa
         busqueda: Término de búsqueda
-        limite: Cantidad máxima de resultados (default 10)
         log_search_apis: Si True, registra API, URL, payload y respuesta en info
 
     Returns:
@@ -177,71 +262,27 @@ async def buscar_productos_servicios(
         "codOpe": COD_OPE,
         "id_empresa": id_empresa,
         "busqueda": busqueda_norm,
-        "limite": limite,
+        "limite": MAX_RESULTADOS,
     }
 
-    if log_search_apis:
-        logger.info("[search_productos_servicios] API: ws_informacion_ia.php - %s", COD_OPE)
-        logger.info("  URL: %s", app_config.API_INFORMACION_URL)
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("  Enviado: %s", json.dumps(payload, ensure_ascii=False))
-    if logger.isEnabledFor(logging.DEBUG):
+    # 4. Anti-thundering herd: si ya hay un request en vuelo para este término,
+    #    esperar ese Task en lugar de generar una segunda llamada idéntica a la API.
+    #    asyncio.shield protege el Task subyacente de cancelaciones externas.
+    if cache_key in _busqueda_inflight:
         logger.debug(
-            "[BUSQUEDA] POST %s - %s",
-            app_config.API_INFORMACION_URL,
-            json.dumps(payload, ensure_ascii=False),
+            "[BUSQUEDA] Esperando request en vuelo id_empresa=%s busqueda=%r",
+            id_empresa, busqueda_norm,
         )
+        return await asyncio.shield(_busqueda_inflight[cache_key])
 
-    # Retry loop: 1 reintento con backoff 0.5s
-    # Solo se reintenta en fallos de red/timeout (excepciones), no en success:false
-    # de la API (eso es respuesta válida del negocio, no error transitorio).
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            data = await post_informacion(payload)
-
-            if log_search_apis and logger.isEnabledFor(logging.INFO):
-                logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
-
-            if not data.get("success"):
-                error_msg = data.get("error") or data.get("message") or "Error desconocido"
-                logger.warning("[BUSQUEDA] API no success id_empresa=%s: %s", id_empresa, error_msg)
-                return {"success": False, "productos": [], "error": error_msg}
-
-            productos = data.get("productos", [])
-            resultado = {"success": True, "productos": productos, "error": None}
-
-            # Éxito: cachear resultado y resetear circuit breaker
-            _busqueda_cache[cache_key] = resultado
-            _reset_failures(id_empresa)
-            logger.debug(
-                "[BUSQUEDA] Cache SET id_empresa=%s busqueda=%r (%s productos)",
-                id_empresa, busqueda_norm, len(productos),
-            )
-            return resultado
-
-        except Exception as e:
-            logger.warning(
-                "[BUSQUEDA] Error intento %d/%d id_empresa=%s busqueda=%r: %s: %s",
-                attempt + 1, max_retries, id_empresa, busqueda_norm, type(e).__name__, e,
-            )
-            if attempt < max_retries - 1:
-                await asyncio.sleep(0.5)
-
-    # Todos los intentos fallaron → registrar fallo en circuit breaker
-    _record_failure(id_empresa)
-    failures = _busqueda_failures.get(id_empresa, 0)
-    if failures >= _FAILURE_THRESHOLD:
-        logger.warning(
-            "[BUSQUEDA] Circuit breaker ABIERTO id_empresa=%s (fallos acumulados=%s)",
-            id_empresa, failures,
-        )
-
-    return {
-        "success": False,
-        "productos": [],
-        "error": "La búsqueda tardó demasiado o tuvo un error. Intenta de nuevo.",
-    }
+    task = asyncio.create_task(
+        _do_busqueda_api(id_empresa, busqueda_norm, cache_key, payload, log_search_apis)
+    )
+    _busqueda_inflight[cache_key] = task
+    try:
+        return await task
+    finally:
+        _busqueda_inflight.pop(cache_key, None)
 
 
 __all__ = ["buscar_productos_servicios", "format_productos_para_respuesta"]

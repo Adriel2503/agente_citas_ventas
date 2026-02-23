@@ -23,7 +23,13 @@ def get_client() -> httpx.AsyncClient:
     """Devuelve el cliente HTTP compartido; lo crea en la primera llamada (lazy init)."""
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=app_config.API_TIMEOUT)
+        _client = httpx.AsyncClient(
+            timeout=app_config.API_TIMEOUT,
+            limits=httpx.Limits(
+                max_keepalive_connections=20,
+                keepalive_expiry=30.0,
+            ),
+        )
     return _client
 
 
