@@ -47,11 +47,12 @@ async def post_informacion(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dict parseado del JSON de respuesta
     """
-    logger.debug(
-        "[API_INFORMACION] POST %s - %s",
-        app_config.API_INFORMACION_URL,
-        json.dumps(payload, ensure_ascii=False),
-    )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "[API_INFORMACION] POST %s - %s",
+            app_config.API_INFORMACION_URL,
+            json.dumps(payload, ensure_ascii=False),
+        )
     cod_ope = payload.get("codOpe", "")
     try:
         client = get_client()

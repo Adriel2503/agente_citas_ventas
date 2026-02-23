@@ -183,12 +183,14 @@ async def buscar_productos_servicios(
     if log_search_apis:
         logger.info("[search_productos_servicios] API: ws_informacion_ia.php - %s", COD_OPE)
         logger.info("  URL: %s", app_config.API_INFORMACION_URL)
-        logger.info("  Enviado: %s", json.dumps(payload, ensure_ascii=False))
-    logger.debug(
-        "[BUSQUEDA] POST %s - %s",
-        app_config.API_INFORMACION_URL,
-        json.dumps(payload, ensure_ascii=False),
-    )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("  Enviado: %s", json.dumps(payload, ensure_ascii=False))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "[BUSQUEDA] POST %s - %s",
+            app_config.API_INFORMACION_URL,
+            json.dumps(payload, ensure_ascii=False),
+        )
 
     # Retry loop: 1 reintento con backoff 0.5s
     # Solo se reintenta en fallos de red/timeout (excepciones), no en success:false
@@ -198,7 +200,7 @@ async def buscar_productos_servicios(
         try:
             data = await post_informacion(payload)
 
-            if log_search_apis:
+            if log_search_apis and logger.isEnabledFor(logging.INFO):
                 logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
 
             if not data.get("success"):
