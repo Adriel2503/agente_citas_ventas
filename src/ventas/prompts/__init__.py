@@ -89,20 +89,20 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
             "No hay información de productos y servicios cargada. "
             "Usa la herramienta search_productos_servicios cuando pregunten por algo concreto."
         )
-        informacion_productos = _default_categorias if isinstance(r_cat, BaseException) else r_cat
-        informacion_sucursales = "" if isinstance(r_suc, BaseException) else r_suc
-        medios_pago_texto = "" if isinstance(r_med, BaseException) else r_med
-        contexto_negocio = r_ctx if not isinstance(r_ctx, BaseException) else None
-        preguntas_frecuentes_str = r_faq if not isinstance(r_faq, BaseException) else ""
-        if isinstance(r_cat, BaseException):
+        informacion_productos = _default_categorias if isinstance(r_cat, Exception) else r_cat
+        informacion_sucursales = "" if isinstance(r_suc, Exception) else r_suc
+        medios_pago_texto = "" if isinstance(r_med, Exception) else r_med
+        contexto_negocio = r_ctx if not isinstance(r_ctx, Exception) else None
+        preguntas_frecuentes_str = r_faq if not isinstance(r_faq, Exception) else ""
+        if isinstance(r_cat, Exception):
             logger.warning("[PROMPT] categorías falló: %s - %s", type(r_cat).__name__, r_cat)
-        if isinstance(r_suc, BaseException):
+        if isinstance(r_suc, Exception):
             logger.warning("[PROMPT] sucursales falló: %s - %s", type(r_suc).__name__, r_suc)
-        if isinstance(r_med, BaseException):
+        if isinstance(r_med, Exception):
             logger.warning("[PROMPT] medios de pago falló: %s - %s", type(r_med).__name__, r_med)
-        if isinstance(r_ctx, BaseException):
+        if isinstance(r_ctx, Exception):
             logger.warning("[PROMPT] contexto_negocio falló: %s - %s", type(r_ctx).__name__, r_ctx)
-        if isinstance(r_faq, BaseException):
+        if isinstance(r_faq, Exception):
             logger.warning("[PROMPT] preguntas_frecuentes falló: %s - %s", type(r_faq).__name__, r_faq)
         variables["informacion_productos_servicios"] = informacion_productos
         variables["informacion_sucursales"] = informacion_sucursales

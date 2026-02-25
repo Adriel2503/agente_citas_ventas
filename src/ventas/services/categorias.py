@@ -10,11 +10,13 @@ from typing import Any
 from cachetools import TTLCache
 
 try:
-    from ..services.api_informacion import post_informacion
+    from ..services.http_client import post_informacion
     from ..services._resilience import resilient_call
+    from ..services.circuit_breaker import informacion_cb
 except ImportError:
-    from ventas.services.api_informacion import post_informacion
+    from ventas.services.http_client import post_informacion
     from ventas.services._resilience import resilient_call
+    from ventas.services.circuit_breaker import informacion_cb
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +25,6 @@ MAX_ITEMS = 15
 
 # Cache TTL 1h (mismo criterio que contexto_negocio y preguntas_frecuentes)
 _categorias_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
-
-# Circuit breaker: auto-reset a los 5 min (mismo TTL que contexto_negocio)
-_categorias_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def _clean_text(text: str | None, max_chars: int = 200) -> str:
@@ -87,7 +86,7 @@ async def obtener_categorias(id_empresa: int) -> str:
     try:
         data = await resilient_call(
             lambda: post_informacion(payload),
-            failures=_categorias_failures,
+            cb=informacion_cb,
             circuit_key=id_empresa,
             service_name="CATEGORIAS",
         )

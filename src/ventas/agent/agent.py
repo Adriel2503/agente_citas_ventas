@@ -3,12 +3,14 @@ Lógica del agente especializado en venta directa usando LangChain 1.2+ API mode
 
 Diseño de cache:
   - _model: singleton del cliente LLM, creado una sola vez al arrancar.
-  - _agent_cache: TTLCache keyed by id_empresa. Un agente por empresa sirve
-    a todos los usuarios de esa empresa usando distintos thread_ids en el
-    checkpointer (InMemorySaver). TTL configurable vía AGENT_CACHE_TTL.
-  - _agent_locks: Lock por empresa para anti-thundering herd (patrón agent_citas).
+  - _agent_cache: TTLCache keyed by (id_empresa, personalidad). Un agente por
+    combinación empresa+personalidad sirve a todos los usuarios usando distintos
+    thread_ids en el checkpointer (InMemorySaver). TTL configurable vía AGENT_CACHE_TTL.
+  - _agent_cache_locks: Lock por cache_key para anti-thundering herd (patrón agent_citas).
     Si N requests llegan en cache miss simultáneo para la misma empresa,
     serializan via lock; solo el primero construye, los demás hacen double-check.
+  - _session_locks: Lock por session_id para serializar requests concurrentes del
+    mismo usuario (evita race conditions en el checkpointer LangGraph).
 """
 
 import asyncio
@@ -26,13 +28,13 @@ try:
     from .. import config as app_config
     from ..tool.tools import AGENT_TOOLS
     from ..logger import get_logger
-    from ..metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION
+    from ..metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION, chat_requests_total, record_chat_error
     from ..prompts import build_ventas_system_prompt
 except ImportError:
     from ventas import config as app_config
     from ventas.tool.tools import AGENT_TOOLS
     from ventas.logger import get_logger
-    from ventas.metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION
+    from ventas.metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION, chat_requests_total, record_chat_error
     from ventas.prompts import build_ventas_system_prompt
 
 logger = get_logger(__name__)
@@ -47,16 +49,21 @@ _checkpointer = InMemorySaver()
 # init_chat_model es síncrono; no hay riesgo de race condition en asyncio.
 _model = None
 
-# Cache de agentes: id_empresa → instancia de agente.
+# Cache de agentes: (id_empresa, personalidad) → instancia de agente.
 # Tamaño y TTL configurables sin redeployar (AGENT_CACHE_MAXSIZE, AGENT_CACHE_TTL).
 _agent_cache: TTLCache = TTLCache(
     maxsize=app_config.AGENT_CACHE_MAXSIZE,
     ttl=app_config.AGENT_CACHE_TTL,
 )
 
-# Lock por empresa para anti-thundering herd (patrón agent_citas).
+# Lock por cache_key para anti-thundering herd en construcción de agente.
 # Limpiado en finally de _get_agent → no acumula entradas.
-_agent_locks: dict[int, asyncio.Lock] = {}
+_agent_cache_locks: dict[tuple, asyncio.Lock] = {}
+_LOCKS_CLEANUP_THRESHOLD = 750  # 1.5x maxsize=500
+
+# Session locks: serializa requests concurrentes del mismo usuario en ainvoke.
+_session_locks: dict[int, asyncio.Lock] = {}
+_SESSION_LOCKS_CLEANUP_THRESHOLD = 500
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +75,35 @@ class AgentContext:
     """Contexto runtime para el agente (inyectado en las tools)."""
     id_empresa: int
     session_id: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Cleanup de locks obsoletos
+# ---------------------------------------------------------------------------
+
+def _cleanup_stale_agent_locks(current_cache_key: tuple) -> None:
+    """Elimina locks de agent_cache que ya no tienen entrada en el cache."""
+    if len(_agent_cache_locks) < _LOCKS_CLEANUP_THRESHOLD:
+        return
+    stale = [k for k in list(_agent_cache_locks) if k not in _agent_cache and k != current_cache_key]
+    for k in stale:
+        _agent_cache_locks.pop(k, None)
+    if stale:
+        logger.debug("[AGENT] Cleanup: %s agent locks eliminados", len(stale))
+
+
+def _cleanup_stale_session_locks(current_session_id: int) -> None:
+    """Elimina locks de sesión que ya no están en uso activo."""
+    if len(_session_locks) < _SESSION_LOCKS_CLEANUP_THRESHOLD:
+        return
+    stale = [
+        k for k in list(_session_locks)
+        if k != current_session_id and not _session_locks[k].locked()
+    ]
+    for k in stale:
+        _session_locks.pop(k, None)
+    if stale:
+        logger.debug("[AGENT] Cleanup: %s session locks eliminados", len(stale))
 
 
 # ---------------------------------------------------------------------------
@@ -125,38 +161,40 @@ async def _build_agent_for_empresa(id_empresa: int, config: dict[str, Any]):
 
 async def _get_agent(config: dict[str, Any]):
     """
-    Retorna el agente para esta empresa.
+    Retorna el agente para esta empresa+personalidad.
 
     - Fast path (cache hit): O(1), sin I/O.
-    - Slow path (cache miss): Lock por empresa + double-check post-lock.
+    - Slow path (cache miss): Lock por (id_empresa, personalidad) + double-check post-lock.
       N requests concurrentes serializan; solo el primero construye.
       Mismo patrón que agent_citas.
     """
     id_empresa: int = config["id_empresa"]
+    cache_key = (id_empresa, config.get("personalidad", ""))
 
     # Fast path — sin lock
-    if id_empresa in _agent_cache:
+    if cache_key in _agent_cache:
         AGENT_CACHE.labels(result="hit").inc()
         logger.debug("[AGENT] Cache HIT id_empresa=%s", id_empresa)
-        return _agent_cache[id_empresa]
+        return _agent_cache[cache_key]
 
-    lock = _agent_locks.setdefault(id_empresa, asyncio.Lock())
+    _cleanup_stale_agent_locks(cache_key)
+    lock = _agent_cache_locks.setdefault(cache_key, asyncio.Lock())
     try:
         async with lock:
             # Double-check: otro request puede haber construido el agente
             # mientras esperábamos el lock
-            if id_empresa in _agent_cache:
+            if cache_key in _agent_cache:
                 AGENT_CACHE.labels(result="hit").inc()
                 logger.debug("[AGENT] Cache HIT (post-lock) id_empresa=%s", id_empresa)
-                return _agent_cache[id_empresa]
+                return _agent_cache[cache_key]
 
             AGENT_CACHE.labels(result="miss").inc()
             logger.info("[AGENT] Cache MISS id_empresa=%s — iniciando build", id_empresa)
             agent = await _build_agent_for_empresa(id_empresa, config)
-            _agent_cache[id_empresa] = agent
+            _agent_cache[cache_key] = agent
             return agent
     finally:
-        _agent_locks.pop(id_empresa, None)
+        _agent_cache_locks.pop(cache_key, None)
 
 
 def _prepare_agent_context(context: dict[str, Any], session_id: int) -> AgentContext:
@@ -210,9 +248,10 @@ async def process_venta_message(
     """
     Procesa un mensaje del cliente sobre ventas usando el agente LangChain.
 
-    El agente se obtiene del cache por id_empresa (TTL=AGENT_CACHE_TTL).
+    El agente se obtiene del cache por (id_empresa, personalidad) (TTL=AGENT_CACHE_TTL).
     El historial de conversación se aísla por session_id via thread_id
-    en el checkpointer (InMemorySaver).
+    en el checkpointer (InMemorySaver). Los requests concurrentes del mismo
+    session_id se serializan vía _session_locks para evitar race conditions.
 
     Args:
         message: Mensaje del cliente
@@ -232,14 +271,20 @@ async def process_venta_message(
         _validate_context(context)
     except ValueError as e:
         logger.error("[AGENT] Error de contexto: %s", e)
+        record_chat_error("context_error")
         return f"Error de configuración: {str(e)}"
 
     config_data = dict(context.get("config", {}))
+    _empresa_id = str(config_data.get("id_empresa", "unknown"))
+
+    # Registrar request por empresa
+    chat_requests_total.labels(empresa_id=_empresa_id).inc()
 
     try:
         agent = await _get_agent(config_data)
     except Exception as e:
         logger.error("[AGENT] Error obteniendo agente id_empresa=%s: %s", config_data.get("id_empresa"), e, exc_info=True)
+        record_chat_error("agent_creation_error")
         return "Disculpa, tuve un problema de configuración. ¿Podrías intentar nuevamente?"
 
     agent_context = _prepare_agent_context(context, session_id)
@@ -248,14 +293,19 @@ async def process_venta_message(
     _llm_start = time.perf_counter()
     _llm_status = "success"
 
-    try:
-        logger.debug("[AGENT] Invocando agente — session=%s, empresa=%s", session_id, config_data.get("id_empresa"))
+    # Session lock: serializa requests concurrentes del mismo usuario
+    _cleanup_stale_session_locks(session_id)
+    session_lock = _session_locks.setdefault(session_id, asyncio.Lock())
 
-        result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": _build_content(message)}]},
-            config=langgraph_config,
-            context=agent_context,
-        )
+    try:
+        async with session_lock:
+            logger.debug("[AGENT] Invocando agente — session=%s, empresa=%s", session_id, config_data.get("id_empresa"))
+
+            result = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": _build_content(message)}]},
+                config=langgraph_config,
+                context=agent_context,
+            )
 
         messages = result.get("messages", [])
         if messages:
@@ -273,6 +323,7 @@ async def process_venta_message(
     except Exception as e:
         _llm_status = "error"
         logger.error("[AGENT] Error ejecutando agente session=%s: %s", session_id, e, exc_info=True)
+        record_chat_error("agent_execution_error")
         return "Disculpa, tuve un problema al procesar tu mensaje. ¿Podrías intentar nuevamente?"
 
     finally:

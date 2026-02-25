@@ -90,7 +90,7 @@ def _get_log_level(key: str, default: str) -> str:
 OPENAI_API_KEY: str = _get_str("OPENAI_API_KEY", "")
 OPENAI_MODEL: str = _get_str("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TEMPERATURE: float = _get_float("OPENAI_TEMPERATURE", 0.5, min_val=0.0, max_val=2.0)
-OPENAI_TIMEOUT: int = _get_int("OPENAI_TIMEOUT", 90, min_val=1, max_val=300)
+OPENAI_TIMEOUT: int = _get_int("OPENAI_TIMEOUT", 60, min_val=1, max_val=300)
 MAX_TOKENS: int = _get_int("MAX_TOKENS", 2048, min_val=1, max_val=128000)
 
 
@@ -140,3 +140,12 @@ API_PREGUNTAS_FRECUENTES_URL: str = _get_str(
 
 AGENT_CACHE_TTL: int = _get_int("AGENT_CACHE_TTL", 3600, min_val=300, max_val=86400)
 AGENT_CACHE_MAXSIZE: int = _get_int("AGENT_CACHE_MAXSIZE", 500, min_val=10, max_val=5000)
+
+
+# ---------------------------------------------------------------------------
+# Retry HTTP (tenacity) — igual que agent_citas
+# ---------------------------------------------------------------------------
+
+HTTP_RETRY_ATTEMPTS: int = _get_int("HTTP_RETRY_ATTEMPTS", 3, min_val=1, max_val=10)
+HTTP_RETRY_WAIT_MIN: int = _get_int("HTTP_RETRY_WAIT_MIN", 1, min_val=0, max_val=30)
+HTTP_RETRY_WAIT_MAX: int = _get_int("HTTP_RETRY_WAIT_MAX", 4, min_val=1, max_val=60)

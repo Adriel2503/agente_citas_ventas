@@ -1,4 +1,4 @@
-from .api_informacion import post_informacion
+from .http_client import get_client, close_http_client
 from .busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
 from .categorias import obtener_categorias, format_categorias_para_prompt
 from .contexto_negocio import fetch_contexto_negocio
@@ -7,7 +7,8 @@ from .preguntas_frecuentes import fetch_preguntas_frecuentes, format_preguntas_f
 from .sucursales import obtener_sucursales, format_sucursales_para_prompt
 
 __all__ = [
-    "post_informacion",
+    "get_client",
+    "close_http_client",
     "buscar_productos_servicios",
     "format_productos_para_respuesta",
     "obtener_categorias",

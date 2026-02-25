@@ -10,20 +10,19 @@ from cachetools import TTLCache
 
 try:
     from .. import config as app_config
-    from .api_informacion import get_client
+    from .http_client import get_client
     from ._resilience import resilient_call
+    from .circuit_breaker import preguntas_cb
 except ImportError:
     from ventas import config as app_config
-    from ventas.services.api_informacion import get_client
+    from ventas.services.http_client import get_client
     from ventas.services._resilience import resilient_call
+    from ventas.services.circuit_breaker import preguntas_cb
 
 logger = logging.getLogger(__name__)
 
 # Cache TTL por id_chatbot (1 hora), mismo criterio que contexto_negocio
 _preguntas_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
-
-# Circuit breaker: auto-reset a los 5 min
-_preguntas_failures: TTLCache = TTLCache(maxsize=500, ttl=300)
 
 
 def format_preguntas_frecuentes_para_prompt(items: list[dict[str, Any]]) -> str:
@@ -92,7 +91,7 @@ async def fetch_preguntas_frecuentes(id_chatbot: Any | None) -> str:
     try:
         data = await resilient_call(
             _fetch,
-            failures=_preguntas_failures,
+            cb=preguntas_cb,
             circuit_key=id_chatbot,
             service_name="PREGUNTAS_FRECUENTES",
         )

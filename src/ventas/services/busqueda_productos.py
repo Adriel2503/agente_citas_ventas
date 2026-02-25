@@ -6,9 +6,9 @@ Resiliencia:
   - TTLCache 15 min por (id_empresa, búsqueda): absorbe búsquedas repetidas
     del mismo término entre usuarios de la misma empresa.
   - Anti-thundering herd: si N usuarios buscan el mismo término simultáneamente
-    en cache miss, solo el primero llama a la API; los demás esperan ese Task.
-  - Retry: 1 reintento con backoff 0.5s para fallos de red transitorios.
-  - Circuit breaker: 3 fallos → corte de 3 min por empresa (auto-reset).
+    en cache miss, solo el primero llama a la API; los demás esperan ese Lock.
+  - Retry: tenacity en post_with_retry (TransportError, exponential backoff).
+  - Circuit breaker: informacion_cb compartido (3 fallos → abierto 5 min, auto-reset).
 """
 
 import asyncio
@@ -17,16 +17,19 @@ import logging
 import re
 from typing import Any
 
+import httpx
 from cachetools import TTLCache
 
 try:
     from .. import config as app_config
     from ..metrics import SEARCH_CACHE
-    from ..services.api_informacion import post_informacion
+    from ..services.http_client import post_with_retry
+    from ..services.circuit_breaker import informacion_cb
 except ImportError:
     from ventas import config as app_config
     from ventas.metrics import SEARCH_CACHE
-    from ventas.services.api_informacion import post_informacion
+    from ventas.services.http_client import post_with_retry
+    from ventas.services.circuit_breaker import informacion_cb
 
 logger = logging.getLogger(__name__)
 
@@ -43,34 +46,9 @@ MAX_RESULTADOS = 10
 # maxsize 2000: ~40 términos por empresa para 50 empresas simultáneas.
 _busqueda_cache: TTLCache = TTLCache(maxsize=2000, ttl=900)
 
-# ---------------------------------------------------------------------------
-# Circuit breaker por empresa
-# ---------------------------------------------------------------------------
-
-# TTLCache como circuit breaker: el auto-reset ocurre a los 3 min (TTL del dict).
-# Si la API de una empresa falla 3 veces seguidas, se corta el circuito y
-# las búsquedas devuelven error inmediato hasta que el TTL resetee el contador.
-_busqueda_failures: TTLCache = TTLCache(maxsize=500, ttl=180)  # 3 min auto-reset
-_FAILURE_THRESHOLD = 3
-
 # Lock por (id_empresa, búsqueda) para anti-thundering herd.
 # Mismo patrón que agent_citas. Limpiado en finally.
 _busqueda_locks: dict[tuple, asyncio.Lock] = {}
-
-
-def _is_circuit_open(id_empresa: int) -> bool:
-    """True si el circuit breaker está abierto para esta empresa."""
-    return _busqueda_failures.get(id_empresa, 0) >= _FAILURE_THRESHOLD
-
-
-def _record_failure(id_empresa: int) -> None:
-    """Incrementa el contador de fallos del circuit breaker."""
-    _busqueda_failures[id_empresa] = _busqueda_failures.get(id_empresa, 0) + 1
-
-
-def _reset_failures(id_empresa: int) -> None:
-    """Resetea el circuit breaker tras una llamada exitosa."""
-    _busqueda_failures.pop(id_empresa, None)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +106,7 @@ def format_productos_para_respuesta(productos: list[dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Llamada a la API (retry + circuit breaker update)
+# Llamada a la API (tenacity retry vía post_with_retry + informacion_cb)
 # ---------------------------------------------------------------------------
 
 async def _do_busqueda_api(
@@ -139,8 +117,8 @@ async def _do_busqueda_api(
     log_search_apis: bool,
 ) -> dict[str, Any]:
     """
-    Ejecuta la llamada real a la API con retry. Se llama SOLO desde
-    buscar_productos_servicios, dentro de un asyncio.Task (anti-thundering herd).
+    Ejecuta la llamada real a la API con tenacity retry. Se llama SOLO desde
+    buscar_productos_servicios, dentro de un asyncio.Lock (anti-thundering herd).
     """
     if log_search_apis:
         logger.info("[search_productos_servicios] API: ws_informacion_ia.php - %s", COD_OPE)
@@ -154,55 +132,51 @@ async def _do_busqueda_api(
             json.dumps(payload, ensure_ascii=False),
         )
 
-    # Retry loop: 1 reintento con backoff 0.5s.
-    # Solo se reintenta en excepciones de red; success:false es respuesta
-    # válida del negocio y no se reintenta.
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            data = await post_informacion(payload)
+    try:
+        data = await post_with_retry(app_config.API_INFORMACION_URL, json=payload)
 
-            if log_search_apis and logger.isEnabledFor(logging.INFO):
-                logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
+        if log_search_apis and logger.isEnabledFor(logging.INFO):
+            logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
 
-            if not data.get("success"):
-                error_msg = data.get("error") or data.get("message") or "Error desconocido"
-                logger.warning("[BUSQUEDA] API no success id_empresa=%s: %s", id_empresa, error_msg)
-                return {"success": False, "productos": [], "error": error_msg}
+        if not data.get("success"):
+            error_msg = data.get("error") or data.get("message") or "Error desconocido"
+            logger.warning("[BUSQUEDA] API no success id_empresa=%s: %s", id_empresa, error_msg)
+            return {"success": False, "productos": [], "error": error_msg}
 
-            productos = data.get("productos", [])
-            resultado = {"success": True, "productos": productos, "error": None}
+        productos = data.get("productos", [])
+        resultado = {"success": True, "productos": productos, "error": None}
 
-            # Éxito: cachear resultado y resetear circuit breaker
-            _busqueda_cache[cache_key] = resultado
-            _reset_failures(id_empresa)
-            logger.debug(
-                "[BUSQUEDA] Cache SET id_empresa=%s busqueda=%r (%s productos)",
-                id_empresa, busqueda_norm, len(productos),
-            )
-            return resultado
-
-        except Exception as e:
-            logger.warning(
-                "[BUSQUEDA] Error intento %d/%d id_empresa=%s busqueda=%r: %s: %s",
-                attempt + 1, max_retries, id_empresa, busqueda_norm, type(e).__name__, e,
-            )
-            if attempt < max_retries - 1:
-                await asyncio.sleep(0.5)
-
-    # Todos los intentos fallaron → actualizar circuit breaker
-    _record_failure(id_empresa)
-    failures = _busqueda_failures.get(id_empresa, 0)
-    if failures >= _FAILURE_THRESHOLD:
-        logger.warning(
-            "[BUSQUEDA] Circuit breaker ABIERTO id_empresa=%s (fallos acumulados=%s)",
-            id_empresa, failures,
+        # Éxito: cachear resultado y registrar en circuit breaker
+        _busqueda_cache[cache_key] = resultado
+        informacion_cb.record_success(id_empresa)
+        logger.debug(
+            "[BUSQUEDA] Cache SET id_empresa=%s busqueda=%r (%s productos)",
+            id_empresa, busqueda_norm, len(productos),
         )
-    return {
-        "success": False,
-        "productos": [],
-        "error": "La búsqueda tardó demasiado o tuvo un error. Intenta de nuevo.",
-    }
+        return resultado
+
+    except httpx.TransportError as e:
+        logger.warning(
+            "[BUSQUEDA] Error de red id_empresa=%s busqueda=%r: %s: %s",
+            id_empresa, busqueda_norm, type(e).__name__, e,
+        )
+        informacion_cb.record_failure(id_empresa)
+        return {
+            "success": False,
+            "productos": [],
+            "error": "La búsqueda tardó demasiado o tuvo un error. Intenta de nuevo.",
+        }
+
+    except Exception as e:
+        logger.warning(
+            "[BUSQUEDA] Error id_empresa=%s busqueda=%r: %s: %s",
+            id_empresa, busqueda_norm, type(e).__name__, e,
+        )
+        return {
+            "success": False,
+            "productos": [],
+            "error": "La búsqueda tuvo un error inesperado. Intenta de nuevo.",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +192,7 @@ async def buscar_productos_servicios(
     Busca productos y servicios por término (ventas directas).
 
     Incluye TTLCache 15 min por (id_empresa, búsqueda), anti-thundering herd,
-    1 reintento con backoff 0.5s y circuit breaker (3 fallos → corte 3 min).
+    retry tenacity (TransportError) y circuit breaker compartido (informacion_cb).
     Cantidad de resultados fija en MAX_RESULTADOS (10).
 
     Args:
@@ -242,7 +216,7 @@ async def buscar_productos_servicios(
         return _busqueda_cache[cache_key]
 
     # 2. Circuit breaker — si la API de esta empresa está fallando, cortar rápido
-    if _is_circuit_open(id_empresa):
+    if informacion_cb.is_open(id_empresa):
         SEARCH_CACHE.labels(result="circuit_open").inc()
         logger.warning(
             "[BUSQUEDA] Circuit ABIERTO id_empresa=%s — búsqueda rechazada sin llamar API",
