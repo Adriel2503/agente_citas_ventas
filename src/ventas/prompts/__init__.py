@@ -12,6 +12,7 @@ try:
     from ..logger import get_logger
     from ..services.categorias import obtener_categorias
     from ..services.contexto_negocio import fetch_contexto_negocio
+    from ..services.costo_envio import obtener_costos_envio
     from ..services.metodos_pago import obtener_metodos_pago
     from ..services.preguntas_frecuentes import fetch_preguntas_frecuentes
     from ..services.sucursales import obtener_sucursales
@@ -19,6 +20,7 @@ except ImportError:
     from ventas.logger import get_logger
     from ventas.services.categorias import obtener_categorias
     from ventas.services.contexto_negocio import fetch_contexto_negocio
+    from ventas.services.costo_envio import obtener_costos_envio
     from ventas.services.metodos_pago import obtener_metodos_pago
     from ventas.services.preguntas_frecuentes import fetch_preguntas_frecuentes
     from ventas.services.sucursales import obtener_sucursales
@@ -76,12 +78,13 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
 
     if id_empresa is not None:
         id_emp = int(id_empresa)
-        r_cat, r_suc, r_med, r_ctx, r_faq = await asyncio.gather(
+        r_cat, r_suc, r_med, r_ctx, r_faq, r_costos = await asyncio.gather(
             obtener_categorias(id_emp),
             obtener_sucursales(id_emp),
             obtener_metodos_pago(id_emp),
             fetch_contexto_negocio(id_emp),
             fetch_preguntas_frecuentes(id_chatbot),
+            obtener_costos_envio(id_emp),
             return_exceptions=True,
         )
         # Degradación elegante: si una tarea lanzó, usar el mismo default que ese servicio
@@ -94,6 +97,7 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
         medios_pago_texto = "" if isinstance(r_med, Exception) else r_med
         contexto_negocio = r_ctx if not isinstance(r_ctx, Exception) else None
         preguntas_frecuentes_str = r_faq if not isinstance(r_faq, Exception) else ""
+        costos_envio_str = "" if isinstance(r_costos, Exception) else r_costos
         if isinstance(r_cat, Exception):
             logger.warning("[PROMPT] categorías falló: %s - %s", type(r_cat).__name__, r_cat)
         if isinstance(r_suc, Exception):
@@ -104,11 +108,14 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
             logger.warning("[PROMPT] contexto_negocio falló: %s - %s", type(r_ctx).__name__, r_ctx)
         if isinstance(r_faq, Exception):
             logger.warning("[PROMPT] preguntas_frecuentes falló: %s - %s", type(r_faq).__name__, r_faq)
+        if isinstance(r_costos, Exception):
+            logger.warning("[PROMPT] costos_envio falló: %s - %s", type(r_costos).__name__, r_costos)
         variables["informacion_productos_servicios"] = informacion_productos
         variables["informacion_sucursales"] = informacion_sucursales
         variables["medios_pago"] = medios_pago_texto or variables.get("medios_pago", "")
         variables["contexto_negocio"] = contexto_negocio
         variables["preguntas_frecuentes"] = preguntas_frecuentes_str or ""
+        variables["informacion_costos_envio"] = costos_envio_str
     else:
         variables["informacion_productos_servicios"] = (
             "No hay información de productos y servicios cargada. "
@@ -116,6 +123,7 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
         )
         variables["informacion_sucursales"] = ""
         variables["contexto_negocio"] = None
+        variables["informacion_costos_envio"] = ""
         # FAQs se pueden cargar solo con id_chatbot (mismo payload que citas)
         preguntas_frecuentes_str = await fetch_preguntas_frecuentes(id_chatbot)
         variables["preguntas_frecuentes"] = preguntas_frecuentes_str or ""
