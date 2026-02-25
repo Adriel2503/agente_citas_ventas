@@ -60,6 +60,13 @@ LLM_DURATION = Histogram(
     buckets=[0.5, 1, 2, 5, 10, 20, 30, 60, 90],
 )
 
+chat_response_duration_seconds = Histogram(
+    "ventas_chat_response_duration_seconds",
+    "Latencia total del procesamiento de mensaje (lock + ainvoke + resultado)",
+    ["status"],  # success | error
+    buckets=[0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 90],
+)
+
 # ---------------------------------------------------------------------------
 # Cache del agente (por empresa)
 # ---------------------------------------------------------------------------
@@ -131,7 +138,21 @@ api_call_duration = Histogram(
 
 @contextmanager
 def track_chat_response():
-    """Context manager para medir la duración de una respuesta LLM completa."""
+    """Context manager para medir la latencia total del procesamiento de mensaje."""
+    status = "success"
+    start = time.perf_counter()
+    try:
+        yield
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        chat_response_duration_seconds.labels(status=status).observe(time.perf_counter() - start)
+
+
+@contextmanager
+def track_llm_call():
+    """Context manager para medir la duración del ainvoke (LLM puro + tool calls)."""
     status = "success"
     start = time.perf_counter()
     try:
@@ -184,6 +205,7 @@ __all__ = [
     "HTTP_DURATION",
     "LLM_REQUESTS",
     "LLM_DURATION",
+    "chat_response_duration_seconds",
     "AGENT_CACHE",
     "TOOL_CALLS",
     "SEARCH_CACHE",
@@ -192,6 +214,7 @@ __all__ = [
     "API_CALLS",
     "api_call_duration",
     "track_chat_response",
+    "track_llm_call",
     "track_tool_execution",
     "track_api_call",
     "record_chat_error",

@@ -15,7 +15,6 @@ Diseño de cache:
 
 import asyncio
 import re
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,13 +27,13 @@ try:
     from .. import config as app_config
     from ..tool.tools import AGENT_TOOLS
     from ..logger import get_logger
-    from ..metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION, chat_requests_total, record_chat_error
+    from ..metrics import AGENT_CACHE, track_chat_response, track_llm_call, chat_requests_total, record_chat_error
     from ..prompts import build_ventas_system_prompt
 except ImportError:
     from ventas import config as app_config
     from ventas.tool.tools import AGENT_TOOLS
     from ventas.logger import get_logger
-    from ventas.metrics import AGENT_CACHE, LLM_REQUESTS, LLM_DURATION, chat_requests_total, record_chat_error
+    from ventas.metrics import AGENT_CACHE, track_chat_response, track_llm_call, chat_requests_total, record_chat_error
     from ventas.prompts import build_ventas_system_prompt
 
 logger = get_logger(__name__)
@@ -290,44 +289,38 @@ async def process_venta_message(
     agent_context = _prepare_agent_context(context, session_id)
     langgraph_config = {"configurable": {"thread_id": str(session_id)}}
 
-    _llm_start = time.perf_counter()
-    _llm_status = "success"
-
     # Session lock: serializa requests concurrentes del mismo usuario
     _cleanup_stale_session_locks(session_id)
     session_lock = _session_locks.setdefault(session_id, asyncio.Lock())
 
     try:
-        async with session_lock:
-            logger.debug("[AGENT] Invocando agente — session=%s, empresa=%s", session_id, config_data.get("id_empresa"))
+        with track_chat_response():
+            async with session_lock:
+                logger.debug("[AGENT] Invocando agente — session=%s, empresa=%s", session_id, config_data.get("id_empresa"))
 
-            result = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": _build_content(message)}]},
-                config=langgraph_config,
-                context=agent_context,
-            )
+                with track_llm_call():
+                    result = await agent.ainvoke(
+                        {"messages": [{"role": "user", "content": _build_content(message)}]},
+                        config=langgraph_config,
+                        context=agent_context,
+                    )
 
-        messages = result.get("messages", [])
-        if messages:
-            last_message = messages[-1]
-            response_text = (
-                last_message.content
-                if hasattr(last_message, "content")
-                else str(last_message)
-            )
-        else:
-            response_text = "Lo siento, no pude procesar tu solicitud."
+            messages = result.get("messages", [])
+            if messages:
+                last_message = messages[-1]
+                response_text = (
+                    last_message.content
+                    if hasattr(last_message, "content")
+                    else str(last_message)
+                )
+            else:
+                response_text = "Lo siento, no pude procesar tu solicitud."
 
-        logger.debug("[AGENT] Respuesta generada: %s...", response_text[:200])
+            logger.debug("[AGENT] Respuesta generada: %s...", response_text[:200])
 
     except Exception as e:
-        _llm_status = "error"
         logger.error("[AGENT] Error ejecutando agente session=%s: %s", session_id, e, exc_info=True)
         record_chat_error("agent_execution_error")
         return "Disculpa, tuve un problema al procesar tu mensaje. ¿Podrías intentar nuevamente?"
-
-    finally:
-        LLM_REQUESTS.labels(status=_llm_status).inc()
-        LLM_DURATION.observe(time.perf_counter() - _llm_start)
 
     return response_text
