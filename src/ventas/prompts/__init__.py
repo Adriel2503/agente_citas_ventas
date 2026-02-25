@@ -73,6 +73,9 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
     if nombre_bot and (not variables.get("nombre_negocio") or variables.get("nombre_negocio") == "la empresa"):
         variables["nombre_negocio"] = nombre_bot
 
+    # URL de video/imagen de saludo (opcional; el gateway la envía en context.config)
+    variables["archivo_saludo"] = (config.get("archivo_saludo") or "").strip()
+
     id_empresa = config.get("id_empresa")
     id_chatbot = config.get("id_chatbot")
 

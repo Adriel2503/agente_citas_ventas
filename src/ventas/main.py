@@ -116,7 +116,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             - config.medios_pago (str, opcional)
 
     Returns:
-        JSON con campo reply y url (siempre null en ventas)
+        JSON con campo reply (texto del agente) y url (opcional, ej. video/imagen de saludo)
     """
     context = req.context or {}
 
@@ -128,7 +128,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     _http_status = "success"
 
     try:
-        reply = await asyncio.wait_for(
+        reply, url = await asyncio.wait_for(
             process_venta_message(
                 message=req.message,
                 session_id=req.session_id,
@@ -139,7 +139,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
         logger.info("[HTTP] Respuesta generada - Length: %s chars", len(reply))
         logger.debug("[HTTP] Reply: %s...", reply[:200])
-        return ChatResponse(reply=reply, url=None)
+        return ChatResponse(reply=reply, url=url)
 
     except asyncio.TimeoutError:
         _http_status = "timeout"

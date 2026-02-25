@@ -22,6 +22,7 @@ from cachetools import TTLCache
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import BaseModel
 
 try:
     from .. import config as app_config
@@ -37,6 +38,14 @@ except ImportError:
     from ventas.prompts import build_ventas_system_prompt
 
 logger = get_logger(__name__)
+
+
+class VentasStructuredResponse(BaseModel):
+    """Schema para response_format. reply obligatorio; url opcional (ej. video/imagen de saludo)."""
+
+    reply: str
+    url: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Singletons de módulo
@@ -150,6 +159,7 @@ async def _build_agent_for_empresa(id_empresa: int, config: dict[str, Any]):
         tools=AGENT_TOOLS,
         system_prompt=system_prompt,
         checkpointer=_checkpointer,
+        response_format=VentasStructuredResponse,
     )
     logger.info(
         "[AGENT] Agente listo para id_empresa=%s (tools=%s, TTL=%s min)",
@@ -243,7 +253,7 @@ async def process_venta_message(
     message: str,
     session_id: int,
     context: dict[str, Any],
-) -> str:
+) -> tuple[str, str | None]:
     """
     Procesa un mensaje del cliente sobre ventas usando el agente LangChain.
 
@@ -258,10 +268,10 @@ async def process_venta_message(
         context: Contexto con config (id_empresa, personalidad, nombre_negocio, etc.)
 
     Returns:
-        Respuesta del agente de ventas
+        Tupla (reply, url). url es None cuando no hay medio que adjuntar.
     """
     if not message or not message.strip():
-        return "No recibí tu mensaje. ¿Podrías repetirlo?"
+        return ("No recibí tu mensaje. ¿Podrías repetirlo?", None)
 
     if session_id is None or session_id < 0:
         raise ValueError("session_id es requerido (entero no negativo)")
@@ -271,7 +281,7 @@ async def process_venta_message(
     except ValueError as e:
         logger.error("[AGENT] Error de contexto: %s", e)
         record_chat_error("context_error")
-        return f"Error de configuración: {str(e)}"
+        return (f"Error de configuración: {str(e)}", None)
 
     config_data = dict(context.get("config", {}))
     _empresa_id = str(config_data.get("id_empresa", "unknown"))
@@ -284,7 +294,7 @@ async def process_venta_message(
     except Exception as e:
         logger.error("[AGENT] Error obteniendo agente id_empresa=%s: %s", config_data.get("id_empresa"), e, exc_info=True)
         record_chat_error("agent_creation_error")
-        return "Disculpa, tuve un problema de configuración. ¿Podrías intentar nuevamente?"
+        return ("Disculpa, tuve un problema de configuración. ¿Podrías intentar nuevamente?", None)
 
     agent_context = _prepare_agent_context(context, session_id)
     langgraph_config = {"configurable": {"thread_id": str(session_id)}}
@@ -305,22 +315,28 @@ async def process_venta_message(
                         context=agent_context,
                     )
 
-            messages = result.get("messages", [])
-            if messages:
-                last_message = messages[-1]
-                response_text = (
-                    last_message.content
-                    if hasattr(last_message, "content")
-                    else str(last_message)
-                )
+            structured = result.get("structured_response")
+            if isinstance(structured, VentasStructuredResponse):
+                reply = structured.reply or "Lo siento, no pude procesar tu solicitud."
+                url = structured.url if (structured.url and structured.url.strip()) else None
             else:
-                response_text = "Lo siento, no pude procesar tu solicitud."
+                messages = result.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    reply = (
+                        last_message.content
+                        if hasattr(last_message, "content")
+                        else str(last_message)
+                    )
+                else:
+                    reply = "Lo siento, no pude procesar tu solicitud."
+                url = None
 
-            logger.debug("[AGENT] Respuesta generada: %s...", response_text[:200])
+            logger.debug("[AGENT] Respuesta generada: %s...", (reply[:200], url))
 
     except Exception as e:
         logger.error("[AGENT] Error ejecutando agente session=%s: %s", session_id, e, exc_info=True)
         record_chat_error("agent_execution_error")
-        return "Disculpa, tuve un problema al procesar tu mensaje. ¿Podrías intentar nuevamente?"
+        return ("Disculpa, tuve un problema al procesar tu mensaje. ¿Podrías intentar nuevamente?", None)
 
-    return response_text
+    return (reply, url)
