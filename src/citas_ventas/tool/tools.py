@@ -4,7 +4,7 @@ Versión mínima: búsqueda de productos/servicios (BUSCAR_PRODUCTOS_SERVICIOS_V
 """
 
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
 from langchain.tools import tool, ToolRuntime
 
@@ -85,9 +85,15 @@ async def search_productos_servicios(
         TOOL_CALLS.labels(tool="search_productos_servicios", status=_tool_status).inc()
 
 
+class ProductoItem(TypedDict):
+    """Item de producto para registrar en un pedido."""
+    id_catalogo: int
+    cantidad: int
+
+
 @tool
 async def registrar_pedido(
-    productos: list[dict[str, Any]],
+    productos: list[ProductoItem],
     operacion: str,
     modalidad: str,
     tipo_envio: str,
