@@ -1,9 +1,9 @@
 services:
-  agent_ventas:
+  agent_citas_ventas:
     build:
       context: .
     ports:
-      - "8001:8001"
+      - "8004:8004"
     env_file:
       - .env
     restart: unless-stopped

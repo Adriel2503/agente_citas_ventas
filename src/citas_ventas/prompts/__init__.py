@@ -1,5 +1,5 @@
 """
-Prompts del agente de ventas. Builder del system prompt.
+Prompts del agente de citas y ventas. Builder del system prompt.
 """
 
 import asyncio
@@ -16,14 +16,16 @@ try:
     from ..services.metodos_pago import obtener_metodos_pago
     from ..services.preguntas_frecuentes import fetch_preguntas_frecuentes
     from ..services.sucursales import obtener_sucursales
+    from ..services.horario_reuniones import fetch_horario_reuniones
 except ImportError:
-    from ventas.logger import get_logger
-    from ventas.services.categorias import obtener_categorias
-    from ventas.services.contexto_negocio import fetch_contexto_negocio
-    from ventas.services.costo_envio import obtener_costos_envio
-    from ventas.services.metodos_pago import obtener_metodos_pago
-    from ventas.services.preguntas_frecuentes import fetch_preguntas_frecuentes
-    from ventas.services.sucursales import obtener_sucursales
+    from citas_ventas.logger import get_logger
+    from citas_ventas.services.categorias import obtener_categorias
+    from citas_ventas.services.contexto_negocio import fetch_contexto_negocio
+    from citas_ventas.services.costo_envio import obtener_costos_envio
+    from citas_ventas.services.metodos_pago import obtener_metodos_pago
+    from citas_ventas.services.preguntas_frecuentes import fetch_preguntas_frecuentes
+    from citas_ventas.services.sucursales import obtener_sucursales
+    from citas_ventas.services.horario_reuniones import fetch_horario_reuniones
 
 logger = get_logger(__name__)
 
@@ -57,7 +59,7 @@ def _apply_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
 async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
     """
-    Construye el system prompt del agente de ventas.
+    Construye el system prompt del agente de citas y ventas.
 
     Args:
         config: Diccionario con id_empresa (para categorías), nombre_negocio,
@@ -81,13 +83,14 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
 
     if id_empresa is not None:
         id_emp = int(id_empresa)
-        r_cat, r_suc, r_med, r_ctx, r_faq, r_costos = await asyncio.gather(
+        r_cat, r_suc, r_med, r_ctx, r_faq, r_costos, r_horario = await asyncio.gather(
             obtener_categorias(id_emp),
             obtener_sucursales(id_emp),
             obtener_metodos_pago(id_emp),
             fetch_contexto_negocio(id_emp),
             fetch_preguntas_frecuentes(id_chatbot),
             obtener_costos_envio(id_emp),
+            fetch_horario_reuniones(id_emp),
             return_exceptions=True,
         )
         # Degradación elegante: si una tarea lanzó, usar el mismo default que ese servicio
@@ -101,6 +104,7 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
         contexto_negocio = r_ctx if not isinstance(r_ctx, Exception) else None
         preguntas_frecuentes_str = r_faq if not isinstance(r_faq, Exception) else ""
         costos_envio_str = "" if isinstance(r_costos, Exception) else r_costos
+        horario_reuniones_str = r_horario if not isinstance(r_horario, Exception) else ""
         if isinstance(r_cat, Exception):
             logger.warning("[PROMPT] categorías falló: %s - %s", type(r_cat).__name__, r_cat)
         if isinstance(r_suc, Exception):
@@ -113,12 +117,15 @@ async def build_ventas_system_prompt(config: dict[str, Any]) -> str:
             logger.warning("[PROMPT] preguntas_frecuentes falló: %s - %s", type(r_faq).__name__, r_faq)
         if isinstance(r_costos, Exception):
             logger.warning("[PROMPT] costos_envio falló: %s - %s", type(r_costos).__name__, r_costos)
+        if isinstance(r_horario, Exception):
+            logger.warning("[PROMPT] horario_reuniones falló: %s - %s", type(r_horario).__name__, r_horario)
         variables["informacion_productos_servicios"] = informacion_productos
         variables["informacion_sucursales"] = informacion_sucursales
         variables["medios_pago"] = medios_pago_texto or variables.get("medios_pago", "")
         variables["contexto_negocio"] = contexto_negocio
         variables["preguntas_frecuentes"] = preguntas_frecuentes_str or ""
         variables["informacion_costos_envio"] = costos_envio_str
+        variables["horario_reuniones"] = horario_reuniones_str or ""
     else:
         variables["informacion_productos_servicios"] = (
             "No hay información de productos y servicios cargada. "

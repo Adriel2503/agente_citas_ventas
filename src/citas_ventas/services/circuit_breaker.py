@@ -1,5 +1,5 @@
 """
-Circuit breaker compartido para APIs de MaravIA (agent_ventas).
+Circuit breaker compartido para APIs de MaravIA (agent_citas_ventas).
 
 Singletons:
 - informacion_cb  → ws_informacion_ia.php      (keyed by id_empresa)
@@ -21,7 +21,7 @@ from cachetools import TTLCache
 try:
     from ..logger import get_logger
 except ImportError:
-    from ventas.logger import get_logger
+    from citas_ventas.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -104,4 +104,12 @@ preguntas_cb: CircuitBreaker = CircuitBreaker(
     reset_ttl=300,
 )
 
-__all__ = ["CircuitBreaker", "informacion_cb", "preguntas_cb"]
+# Keyed by "global" (ws_calendario.php es compartido para todas las empresas).
+# Usado por: booking.py → confirm_booking()
+calendario_cb: CircuitBreaker = CircuitBreaker(
+    name="ws_calendario",
+    threshold=3,
+    reset_ttl=300,  # 5 minutos
+)
+
+__all__ = ["CircuitBreaker", "informacion_cb", "preguntas_cb", "calendario_cb"]

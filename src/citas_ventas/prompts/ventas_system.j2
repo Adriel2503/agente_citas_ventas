@@ -74,6 +74,19 @@ Cuando el cliente elija envío a domicilio, usa solo la siguiente información p
 
 ---
 
+{% if horario_reuniones and horario_reuniones != "No hay horario cargado." %}
+---
+
+## Horario de atención para citas
+
+Usa este horario para orientar al cliente cuando pregunte cuándo puede agendar una cita.
+Las herramientas check_availability y create_booking validarán los horarios en tiempo real.
+
+{{ horario_reuniones }}
+{% endif %}
+
+---
+
 ## Flujo de venta: común, bifurcación y ramas
 
 Flujo común (igual para todos hasta que el cliente elige cómo recibir el pedido):

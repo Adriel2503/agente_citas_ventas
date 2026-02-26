@@ -1,5 +1,5 @@
 """
-Cliente HTTP compartido para todos los servicios de agent_ventas.
+Cliente HTTP compartido para todos los servicios de agent_citas_ventas.
 
 Inicialización lazy: el cliente se crea en la primera llamada a get_client()
 y se cierra limpiamente en el lifespan del servidor (close_http_client).
@@ -21,7 +21,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 try:
     from .. import config as app_config
 except ImportError:
-    from ventas import config as app_config
+    from citas_ventas import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -83,53 +83,33 @@ async def post_with_retry(url: str, json: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
-async def post_informacion(payload: dict[str, Any]) -> dict[str, Any]:
+async def post_with_logging(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     """
-    POST a ws_informacion_ia.php con logging DEBUG y retry automático (tenacity).
+    Wrapper sobre post_with_retry que loguea request y response en DEBUG.
 
-    Raises:
-        httpx.HTTPStatusError: Si status code no 2xx
-        httpx.TransportError: Error de red/timeout (después de agotar reintentos)
+    - Solo serializa JSON cuando DEBUG está activo (isEnabledFor guard).
+    - Propaga todas las excepciones sin modificarlas.
 
-    Returns:
-        Dict parseado del JSON de respuesta
+    ADVERTENCIA: usar solo en operaciones de LECTURA idempotentes.
     """
     cod_ope = payload.get("codOpe", "")
-
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "[API_INFORMACION] POST %s - %s",
-            app_config.API_INFORMACION_URL,
-            json.dumps(payload, ensure_ascii=False),
-        )
-
+        logger.debug("[API] POST %s - %s", url, json.dumps(payload, ensure_ascii=False))
     try:
-        data = await post_with_retry(app_config.API_INFORMACION_URL, payload)
-
+        data = await post_with_retry(url, payload)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "[API_INFORMACION] Response (codOpe=%s): %s",
-                cod_ope,
-                json.dumps(data, ensure_ascii=False),
-            )
-
+            logger.debug("[API] Response (codOpe=%s): %s", cod_ope, json.dumps(data, ensure_ascii=False))
         return data
-
     except (httpx.HTTPStatusError, httpx.TransportError) as e:
-        logger.warning(
-            "[API_INFORMACION] %s (codOpe=%s): %s",
-            type(e).__name__,
-            cod_ope,
-            e,
-        )
+        logger.warning("[API] %s (codOpe=%s): %s", type(e).__name__, cod_ope, e)
         raise
     except Exception as e:
         logger.error(
-            "[API_INFORMACION] Error inesperado (codOpe=%s): %s: %s",
+            "[API] Error inesperado (codOpe=%s): %s: %s",
             cod_ope, type(e).__name__, e,
             exc_info=True,
         )
         raise
 
 
-__all__ = ["get_client", "close_http_client", "post_with_retry", "post_informacion"]
+__all__ = ["get_client", "close_http_client", "post_with_retry", "post_with_logging"]

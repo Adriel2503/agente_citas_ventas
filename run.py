@@ -1,6 +1,6 @@
 """
-Punto de entrada para el agente de ventas.
-Ejecutar desde la raíz de agent_ventas: python run.py
+Punto de entrada para el agente de citas y ventas.
+Ejecutar desde la raíz de agent_citas_ventas: python run.py
 """
 
 import sys
@@ -13,4 +13,4 @@ if str(_src) not in sys.path:
 
 if __name__ == "__main__":
     import runpy
-    runpy.run_path(str(_src / "ventas" / "main.py"), run_name="__main__")
+    runpy.run_path(str(_src / "citas_ventas" / "main.py"), run_name="__main__")

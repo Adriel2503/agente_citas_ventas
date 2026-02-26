@@ -25,12 +25,12 @@ try:
     from .services.http_client import close_http_client
     from .services.circuit_breaker import informacion_cb, preguntas_cb
 except ImportError:
-    from ventas import config as app_config
-    from ventas.agent import process_venta_message
-    from ventas.logger import setup_logging, get_logger
-    from ventas.metrics import initialize_agent_info, HTTP_REQUESTS, HTTP_DURATION
-    from ventas.services.http_client import close_http_client
-    from ventas.services.circuit_breaker import informacion_cb, preguntas_cb
+    from citas_ventas import config as app_config
+    from citas_ventas.agent import process_venta_message
+    from citas_ventas.logger import setup_logging, get_logger
+    from citas_ventas.metrics import initialize_agent_info, HTTP_REQUESTS, HTTP_DURATION
+    from citas_ventas.services.http_client import close_http_client
+    from citas_ventas.services.circuit_breaker import informacion_cb, preguntas_cb
 
 # Configurar logging antes de cualquier otra cosa
 log_level = getattr(logging, app_config.LOG_LEVEL.upper(), logging.INFO)
@@ -78,8 +78,8 @@ async def app_lifespan(app: FastAPI):
 
 app = FastAPI(
     lifespan=app_lifespan,
-    title="Agente Ventas - MaravIA",
-    description="Servicio de agente especializado en venta directa por chat",
+    title="Agente Citas Ventas - MaravIA",
+    description="Servicio de agente especializado en citas y venta directa por chat",
     version="2.0.0",
 )
 
@@ -185,7 +185,7 @@ async def health():
     status = "degraded" if issues else "ok"
     return JSONResponse(
         status_code=503 if issues else 200,
-        content={"status": status, "agent": "ventas", "version": "2.0.0", "issues": issues},
+        content={"status": status, "agent": "citas_ventas", "version": "2.0.0", "issues": issues},
     )
 
 
@@ -195,7 +195,7 @@ async def health():
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("INICIANDO SERVICIO VENTAS - MaravIA")
+    logger.info("INICIANDO SERVICIO CITAS VENTAS - MaravIA")
     logger.info("=" * 60)
     logger.info("Host: %s:%s", app_config.SERVER_HOST, app_config.SERVER_PORT)
     logger.info("Modelo: %s", app_config.OPENAI_MODEL)
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     logger.info("Endpoint: POST /api/chat")
     logger.info("Health:   GET  /health")
     logger.info("Metrics:  GET  /metrics")
-    logger.info("Tools internas del agente: search_productos_servicios")
+    logger.info("Tools: search_productos_servicios, registrar_pedido, check_availability, create_booking")
     logger.info("=" * 60)
 
     uvicorn.run(

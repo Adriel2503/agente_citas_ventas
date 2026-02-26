@@ -10,14 +10,14 @@ from cachetools import TTLCache
 
 try:
     from .. import config as app_config
-    from .http_client import get_client
+    from .http_client import post_with_logging
     from ._resilience import resilient_call
     from .circuit_breaker import preguntas_cb
 except ImportError:
-    from ventas import config as app_config
-    from ventas.services.http_client import get_client
-    from ventas.services._resilience import resilient_call
-    from ventas.services.circuit_breaker import preguntas_cb
+    from citas_ventas import config as app_config
+    from citas_ventas.services.http_client import post_with_logging
+    from citas_ventas.services._resilience import resilient_call
+    from citas_ventas.services.circuit_breaker import preguntas_cb
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +80,7 @@ async def fetch_preguntas_frecuentes(id_chatbot: Any | None) -> str:
 
     async def _fetch() -> dict:
         logger.debug("[PREGUNTAS_FRECUENTES] Obteniendo FAQs id_chatbot=%s", id_chatbot)
-        client = get_client()
-        response = await client.post(
-            app_config.API_PREGUNTAS_FRECUENTES_URL,
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
+        return await post_with_logging(app_config.API_PREGUNTAS_FRECUENTES_URL, payload)
 
     try:
         data = await resilient_call(

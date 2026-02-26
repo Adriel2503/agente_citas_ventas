@@ -31,11 +31,11 @@ try:
     from ..metrics import AGENT_CACHE, track_chat_response, track_llm_call, chat_requests_total, record_chat_error
     from ..prompts import build_ventas_system_prompt
 except ImportError:
-    from ventas import config as app_config
-    from ventas.tool.tools import AGENT_TOOLS
-    from ventas.logger import get_logger
-    from ventas.metrics import AGENT_CACHE, track_chat_response, track_llm_call, chat_requests_total, record_chat_error
-    from ventas.prompts import build_ventas_system_prompt
+    from citas_ventas import config as app_config
+    from citas_ventas.tool.tools import AGENT_TOOLS
+    from citas_ventas.logger import get_logger
+    from citas_ventas.metrics import AGENT_CACHE, track_chat_response, track_llm_call, chat_requests_total, record_chat_error
+    from citas_ventas.prompts import build_ventas_system_prompt
 
 logger = get_logger(__name__)
 
@@ -83,6 +83,14 @@ class AgentContext:
     """Contexto runtime para el agente (inyectado en las tools)."""
     id_empresa: int
     session_id: int = 0
+    # Campos de agendamiento de citas (con defaults seguros si el orquestador no los envía)
+    duracion_cita_minutos: int = 60
+    slots: int = 60
+    agendar_usuario: int = 1
+    agendar_sucursal: int = 0
+    id_prospecto: int = 0
+    usuario_id: int = 1
+    correo_usuario: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +219,13 @@ def _prepare_agent_context(context: dict[str, Any], session_id: int) -> AgentCon
     return AgentContext(
         id_empresa=config_data["id_empresa"],
         session_id=session_id,
+        duracion_cita_minutos=int(config_data.get("duracion_cita_minutos", 60)),
+        slots=int(config_data.get("slots", 60)),
+        agendar_usuario=int(config_data.get("agendar_usuario", 1)),
+        agendar_sucursal=int(config_data.get("agendar_sucursal", 0)),
+        id_prospecto=int(config_data.get("id_prospecto", 0)),
+        usuario_id=int(config_data.get("usuario_id", 1)),
+        correo_usuario=str(config_data.get("correo_usuario", "") or ""),
     )
 
 

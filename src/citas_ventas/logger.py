@@ -1,5 +1,5 @@
 """
-Sistema de logging centralizado para el agente de ventas.
+Sistema de logging centralizado para el agente de citas y ventas.
 Configura logging consistente en toda la aplicación.
 """
 

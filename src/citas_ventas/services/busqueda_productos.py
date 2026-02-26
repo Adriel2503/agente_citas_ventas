@@ -23,13 +23,13 @@ from cachetools import TTLCache
 try:
     from .. import config as app_config
     from ..metrics import SEARCH_CACHE
-    from ..services.http_client import post_with_retry
+    from ..services.http_client import post_with_logging
     from ..services.circuit_breaker import informacion_cb
 except ImportError:
-    from ventas import config as app_config
-    from ventas.metrics import SEARCH_CACHE
-    from ventas.services.http_client import post_with_retry
-    from ventas.services.circuit_breaker import informacion_cb
+    from citas_ventas import config as app_config
+    from citas_ventas.metrics import SEARCH_CACHE
+    from citas_ventas.services.http_client import post_with_logging
+    from citas_ventas.services.circuit_breaker import informacion_cb
 
 logger = logging.getLogger(__name__)
 
@@ -123,15 +123,9 @@ async def _do_busqueda_api(
         logger.info("  URL: %s", app_config.API_INFORMACION_URL)
         if logger.isEnabledFor(logging.INFO):
             logger.info("  Enviado: %s", json.dumps(payload, ensure_ascii=False))
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "[BUSQUEDA] POST %s - %s",
-            app_config.API_INFORMACION_URL,
-            json.dumps(payload, ensure_ascii=False),
-        )
 
     try:
-        data = await post_with_retry(app_config.API_INFORMACION_URL, json=payload)
+        data = await post_with_logging(app_config.API_INFORMACION_URL, payload)
 
         if log_search_apis and logger.isEnabledFor(logging.INFO):
             logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))

@@ -30,6 +30,6 @@ USER appuser
 COPY src ./src
 ENV PYTHONPATH=/app/src
 
-EXPOSE 8001
+EXPOSE 8004
 
-CMD ["python", "-m", "ventas.main"]
+CMD ["python", "-m", "citas_ventas.main"]

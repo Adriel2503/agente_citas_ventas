@@ -7,6 +7,10 @@ from .metodos_pago import obtener_metodos_pago
 from .preguntas_frecuentes import fetch_preguntas_frecuentes, format_preguntas_frecuentes_para_prompt
 from .registrar_pedido import registrar_pedido
 from .sucursales import obtener_sucursales, format_sucursales_para_prompt
+from .booking import confirm_booking
+from .horario_cache import get_horario, clear_horario_cache
+from .horario_reuniones import fetch_horario_reuniones, format_horario_for_system_prompt
+from .schedule_validator import ScheduleValidator
 
 __all__ = [
     "get_client",
@@ -24,4 +28,10 @@ __all__ = [
     "registrar_pedido",
     "obtener_sucursales",
     "format_sucursales_para_prompt",
+    "confirm_booking",
+    "get_horario",
+    "clear_horario_cache",
+    "fetch_horario_reuniones",
+    "format_horario_for_system_prompt",
+    "ScheduleValidator",
 ]

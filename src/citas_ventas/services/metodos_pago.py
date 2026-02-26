@@ -9,13 +9,15 @@ from typing import Any
 from cachetools import TTLCache
 
 try:
-    from ..services.http_client import post_informacion
+    from .. import config as app_config
+    from ..services.http_client import post_with_logging
     from ..services._resilience import resilient_call
     from ..services.circuit_breaker import informacion_cb
 except ImportError:
-    from ventas.services.http_client import post_informacion
-    from ventas.services._resilience import resilient_call
-    from ventas.services.circuit_breaker import informacion_cb
+    from citas_ventas import config as app_config
+    from citas_ventas.services.http_client import post_with_logging
+    from citas_ventas.services._resilience import resilient_call
+    from citas_ventas.services.circuit_breaker import informacion_cb
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +104,7 @@ async def obtener_metodos_pago(id_empresa: int) -> str:
 
     try:
         data = await resilient_call(
-            lambda: post_informacion(payload),
+            lambda: post_with_logging(app_config.API_INFORMACION_URL, payload),
             cb=informacion_cb,
             circuit_key=id_empresa,
             service_name="METODOS_PAGO",

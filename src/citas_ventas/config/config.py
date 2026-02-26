@@ -1,5 +1,5 @@
 """
-Configuración del agente de ventas (env, API, OpenAI, servidor).
+Configuración del agente de citas y ventas (env, API, OpenAI, servidor).
 Incluye validación de tipos/valores y anotaciones para IDE y documentación.
 """
 
@@ -99,7 +99,7 @@ MAX_TOKENS: int = _get_int("MAX_TOKENS", 2048, min_val=1, max_val=128000)
 # ---------------------------------------------------------------------------
 
 SERVER_HOST: str = _get_str("SERVER_HOST", "0.0.0.0")
-SERVER_PORT: int = _get_int("SERVER_PORT", 8001, min_val=1, max_val=65535)
+SERVER_PORT: int = _get_int("SERVER_PORT", 8004, min_val=1, max_val=65535)
 
 
 # ---------------------------------------------------------------------------
@@ -149,3 +149,23 @@ AGENT_CACHE_MAXSIZE: int = _get_int("AGENT_CACHE_MAXSIZE", 500, min_val=10, max_
 HTTP_RETRY_ATTEMPTS: int = _get_int("HTTP_RETRY_ATTEMPTS", 3, min_val=1, max_val=10)
 HTTP_RETRY_WAIT_MIN: int = _get_int("HTTP_RETRY_WAIT_MIN", 1, min_val=0, max_val=30)
 HTTP_RETRY_WAIT_MAX: int = _get_int("HTTP_RETRY_WAIT_MAX", 4, min_val=1, max_val=60)
+
+
+# ---------------------------------------------------------------------------
+# APIs de agendamiento de citas
+# ---------------------------------------------------------------------------
+
+API_CALENDAR_URL: str = _get_str(
+    "API_CALENDAR_URL",
+    "https://api.maravia.pe/servicio/ws_calendario.php",
+)
+API_AGENDAR_REUNION_URL: str = _get_str(
+    "API_AGENDAR_REUNION_URL",
+    "https://api.maravia.pe/servicio/n8n/ws_agendar_reunion.php",
+)
+
+# Cache del horario de reuniones (TTL en minutos)
+SCHEDULE_CACHE_TTL_MINUTES: int = _get_int("SCHEDULE_CACHE_TTL_MINUTES", 5, min_val=1, max_val=60)
+
+# Zona horaria para validación de fechas/horas
+TIMEZONE: str = _get_str("TIMEZONE", "America/Lima")

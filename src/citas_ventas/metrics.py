@@ -7,14 +7,14 @@ Expone contadores, histogramas e info estática para Prometheus.
 import time
 from contextlib import contextmanager
 
-from prometheus_client import Counter, Histogram, Info
+from prometheus_client import Counter, Gauge, Histogram, Info
 
 # ---------------------------------------------------------------------------
 # Info estática (versión, modelo)
 # ---------------------------------------------------------------------------
 
 agent_info = Info(
-    "agent_ventas_info",
+    "agent_citas_ventas_info",
     "Información del servicio de ventas",
 )
 
@@ -133,6 +133,58 @@ api_call_duration = Histogram(
 
 
 # ---------------------------------------------------------------------------
+# Cache stats (tamaño actual de caches - usado por horario_cache)
+# ---------------------------------------------------------------------------
+
+_CACHE_SIZES = Gauge(
+    "ventas_cache_size",
+    "Tamaño actual de los caches internos",
+    ["cache_name"],
+)
+
+
+def update_cache_stats(cache_name: str, size: int) -> None:
+    """Actualiza el gauge de tamaño de un cache."""
+    _CACHE_SIZES.labels(cache_name=cache_name).set(size)
+
+
+# ---------------------------------------------------------------------------
+# Métricas de booking (citas)
+# ---------------------------------------------------------------------------
+
+booking_attempts_total = Counter(
+    "ventas_booking_attempts_total",
+    "Total de intentos de crear una cita",
+)
+
+booking_success_total = Counter(
+    "ventas_booking_success_total",
+    "Total de citas creadas exitosamente",
+)
+
+booking_failed_total = Counter(
+    "ventas_booking_failed_total",
+    "Total de citas que fallaron al crearse",
+    ["reason"],
+)
+
+
+def record_booking_attempt() -> None:
+    """Registra un intento de crear una cita."""
+    booking_attempts_total.inc()
+
+
+def record_booking_success() -> None:
+    """Registra una cita creada exitosamente."""
+    booking_success_total.inc()
+
+
+def record_booking_failure(reason: str) -> None:
+    """Registra una cita fallida con motivo."""
+    booking_failed_total.labels(reason=reason).inc()
+
+
+# ---------------------------------------------------------------------------
 # Context managers (como agent_citas)
 # ---------------------------------------------------------------------------
 
@@ -218,4 +270,8 @@ __all__ = [
     "track_tool_execution",
     "track_api_call",
     "record_chat_error",
+    "update_cache_stats",
+    "record_booking_attempt",
+    "record_booking_success",
+    "record_booking_failure",
 ]

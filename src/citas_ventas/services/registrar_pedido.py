@@ -21,8 +21,8 @@ try:
     from .. import config as app_config
     from ..services.http_client import get_client
 except ImportError:
-    from ventas import config as app_config
-    from ventas.services.http_client import get_client
+    from citas_ventas import config as app_config
+    from citas_ventas.services.http_client import get_client
 
 logger = logging.getLogger(__name__)
 
