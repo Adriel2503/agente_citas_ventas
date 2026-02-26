@@ -14,14 +14,14 @@ try:
     from ..services.registrar_pedido import registrar_pedido as _svc_registrar_pedido
     from ..services.schedule_validator import ScheduleValidator
     from ..services.booking import confirm_booking
-    from ..validation import validate_booking_data
+    from ..validation import validate_booking_data, validate_date_format
 except ImportError:
     from citas_ventas.metrics import TOOL_CALLS, track_tool_execution
     from citas_ventas.services.busqueda_productos import buscar_productos_servicios, format_productos_para_respuesta
     from citas_ventas.services.registrar_pedido import registrar_pedido as _svc_registrar_pedido
     from citas_ventas.services.schedule_validator import ScheduleValidator
     from citas_ventas.services.booking import confirm_booking
-    from citas_ventas.validation import validate_booking_data
+    from citas_ventas.validation import validate_booking_data, validate_date_format
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +239,10 @@ async def check_availability(
     """
     logger.debug("[TOOL] check_availability - Fecha: %s, Hora: %s", date, time or "no indicada")
 
+    is_valid, error = validate_date_format(date)
+    if not is_valid:
+        return error
+
     # Obtener configuración del runtime context
     ctx = runtime.context if runtime else None
     id_empresa = ctx.id_empresa if ctx else 1
@@ -310,6 +314,10 @@ async def create_booking(
     """
     logger.debug("[TOOL] create_booking - %s %s | %s", date, time, customer_name)
     logger.info("[create_booking] Tool en uso: create_booking")
+
+    is_valid, error = validate_date_format(date)
+    if not is_valid:
+        return error
 
     # Obtener configuración del runtime context
     ctx = runtime.context if runtime else None

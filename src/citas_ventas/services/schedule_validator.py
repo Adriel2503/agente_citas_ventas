@@ -13,14 +13,18 @@ try:
     from ..logger import get_logger
     from ..metrics import track_api_call
     from .. import config as app_config
-    from .http_client import post_with_retry
+    from .http_client import post_with_logging
     from .horario_cache import get_horario, clear_horario_cache
+    from .circuit_breaker import agendar_reunion_cb
+    from ._resilience import resilient_call
 except ImportError:
     from citas_ventas.logger import get_logger
     from citas_ventas.metrics import track_api_call
     from citas_ventas import config as app_config
-    from citas_ventas.services.http_client import post_with_retry
+    from citas_ventas.services.http_client import post_with_logging
     from citas_ventas.services.horario_cache import get_horario, clear_horario_cache
+    from citas_ventas.services.circuit_breaker import agendar_reunion_cb
+    from citas_ventas.services._resilience import resilient_call
 
 logger = get_logger(__name__)
 
@@ -211,7 +215,12 @@ class ScheduleValidator:
             logger.debug("[AVAILABILITY] JSON enviado a ws_agendar_reunion.php (CONSULTAR_DISPONIBILIDAD): %s", json.dumps(payload, ensure_ascii=False, indent=2))
 
             with track_api_call("consultar_disponibilidad"):
-                data = await post_with_retry(app_config.API_AGENDAR_REUNION_URL, json=payload)
+                data = await resilient_call(
+                    lambda: post_with_logging(app_config.API_AGENDAR_REUNION_URL, payload),
+                    cb=agendar_reunion_cb,
+                    circuit_key=self.id_empresa,
+                    service_name="CONSULTAR_DISPONIBILIDAD",
+                )
 
             if self.log_create_booking_apis:
                 logger.info("  Respuesta: %s", json.dumps(data, ensure_ascii=False))
@@ -229,6 +238,11 @@ class ScheduleValidator:
                     "error": "El horario seleccionado ya está ocupado. Por favor elige otra hora o fecha."
                 }
 
+        except RuntimeError:
+            return {
+                "available": False,
+                "error": "El servicio de agendamiento no está disponible en este momento. Intenta en unos minutos.",
+            }
         except httpx.TimeoutException:
             logger.warning("[AVAILABILITY] Timeout - graceful degradation")
             return {"available": True, "error": None}
@@ -391,7 +405,12 @@ class ScheduleValidator:
         logger.debug("[RECOMMENDATION] JSON enviado a ws_agendar_reunion.php (SUGERIR_HORARIOS): %s", json.dumps(payload, ensure_ascii=False, indent=2))
         try:
             with track_api_call("sugerir_horarios"):
-                data = await post_with_retry(app_config.API_AGENDAR_REUNION_URL, json=payload)
+                data = await resilient_call(
+                    lambda: post_with_logging(app_config.API_AGENDAR_REUNION_URL, payload),
+                    cb=agendar_reunion_cb,
+                    circuit_key=self.id_empresa,
+                    service_name="SUGERIR_HORARIOS",
+                )
 
             if data.get("success"):
                 sugerencias = data.get("sugerencias", [])
@@ -430,6 +449,8 @@ class ScheduleValidator:
                             "total": total,
                             "message": mensaje,
                         }
+        except RuntimeError:
+            return {"text": "El servicio de agendamiento no está disponible en este momento. Intenta en unos minutos."}
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             logger.warning("[RECOMMENDATION] Error en SUGERIR_HORARIOS, usando fallback: %s", e)
         except Exception as e:

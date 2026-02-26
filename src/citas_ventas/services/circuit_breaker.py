@@ -20,8 +20,10 @@ from cachetools import TTLCache
 
 try:
     from ..logger import get_logger
+    from .. import config as app_config
 except ImportError:
     from citas_ventas.logger import get_logger
+    from citas_ventas import config as app_config
 
 logger = get_logger(__name__)
 
@@ -92,24 +94,32 @@ class CircuitBreaker:
 # Compartido por: categorias, sucursales, metodos_pago, contexto_negocio, busqueda_productos
 informacion_cb: CircuitBreaker = CircuitBreaker(
     name="ws_informacion_ia",
-    threshold=3,
-    reset_ttl=300,  # 5 minutos
+    threshold=app_config.CB_THRESHOLD,
+    reset_ttl=app_config.CB_RESET_TTL,
 )
 
 # Keyed by id_chatbot.
 # Usado por: preguntas_frecuentes
 preguntas_cb: CircuitBreaker = CircuitBreaker(
     name="ws_preguntas_frecuentes",
-    threshold=3,
-    reset_ttl=300,
+    threshold=app_config.CB_THRESHOLD,
+    reset_ttl=app_config.CB_RESET_TTL,
 )
 
 # Keyed by "global" (ws_calendario.php es compartido para todas las empresas).
 # Usado por: booking.py → confirm_booking()
 calendario_cb: CircuitBreaker = CircuitBreaker(
     name="ws_calendario",
-    threshold=3,
-    reset_ttl=300,  # 5 minutos
+    threshold=app_config.CB_THRESHOLD,
+    reset_ttl=app_config.CB_RESET_TTL,
 )
 
-__all__ = ["CircuitBreaker", "informacion_cb", "preguntas_cb", "calendario_cb"]
+# Keyed by id_empresa.
+# Usado por: schedule_validator.py → check_availability, recommendation
+agendar_reunion_cb: CircuitBreaker = CircuitBreaker(
+    name="ws_agendar_reunion",
+    threshold=app_config.CB_THRESHOLD,
+    reset_ttl=app_config.CB_RESET_TTL,
+)
+
+__all__ = ["CircuitBreaker", "informacion_cb", "preguntas_cb", "calendario_cb", "agendar_reunion_cb"]

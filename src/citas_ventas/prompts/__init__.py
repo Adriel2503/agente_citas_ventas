@@ -38,7 +38,7 @@ _jinja_env = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
     autoescape=select_autoescape(disabled_extensions=()),
 )
-_template = _jinja_env.get_template("ventas_system.j2")
+_template = _jinja_env.get_template("citas_ventas_system.j2")
 
 _DEFAULTS: dict[str, Any] = {
     "personalidad": "amable, profesional y cercano",
